@@ -1,0 +1,44 @@
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "glean-ai"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+  "alembic==1.14.1",
+  "click==8.1.8",
+  "httpx==0.28.1",
+  "pydantic==2.10.6",
+  "pydantic-settings==2.7.1",
+  "psycopg[binary]==3.2.4",
+  "PyYAML==6.0.2",
+  "SQLAlchemy==2.0.38",
+  "structlog==25.1.0",
+  "tenacity==9.0.0",
+  "typer==0.15.1",
+]
+
+[project.optional-dependencies]
+dev = ["mypy==1.15.0", "pytest==8.3.4", "pytest-asyncio==0.25.3", "pytest-cov==6.0.0", "respx==0.22.0", "ruff==0.9.7", "types-PyYAML==6.0.12.20241230"]
+
+[project.scripts]
+glean-ai = "glean_ai.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/glean_ai"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["glean_ai"]
