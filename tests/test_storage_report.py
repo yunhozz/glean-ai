@@ -14,6 +14,8 @@ def test_storage_idempotency(tmp_path, sample):
     store.create_all()
     assert store.upsert(sample) is True
     assert store.upsert(sample) is False
+    rows = store.recent(datetime.now(timezone.utc) - timedelta(days=1))
+    assert rows[0].title == sample.title
 
 
 @pytest.mark.asyncio
