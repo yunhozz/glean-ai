@@ -28,12 +28,14 @@ class DailyService:
         self.settings, self.store, self.client = settings, store, client
 
     def collectors(self) -> dict[str, object]:
-        headers: dict[str, str] = {"User-Agent": self.settings.reddit_user_agent}
-        if self.settings.github_token:
-            headers["Authorization"] = f"Bearer {self.settings.github_token.get_secret_value()}"
-        self.client.headers.update(headers)
+        self.client.headers.update({"User-Agent": self.settings.reddit_user_agent})
+        github_token = (
+            self.settings.github_token.get_secret_value() if self.settings.github_token else None
+        )
         return {
-            "github": GitHubCollector(self.client, self.settings.source_limit),
+            "github": GitHubCollector(
+                self.client, self.settings.source_limit, token=github_token
+            ),
             "huggingface": HuggingFaceCollector(self.client, self.settings.source_limit),
             "reddit": RedditCollector(self.client, self.settings.source_limit),
         }
