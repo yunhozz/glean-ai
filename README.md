@@ -5,7 +5,7 @@
 ## 가정과 현재 범위
 
 - 실행: Docker Compose, 배포: GitHub Actions cron, DB: PostgreSQL.
-- 보고: 매일 08:00 Asia/Seoul, 한국어, Incoming Webhook, TOP 10.
+- 보고: 매일 08:00 Asia/Seoul, 한국어, Incoming Webhook, 최대 10건.
 - 수집 상한: source당 100개. 기본 관심 목록은 `config/interests.yaml`.
 - GitHub, Hugging Face, Reddit를 구현했습니다. 테스트는 실제 API를 호출하지 않습니다.
 - X와 Threads는 공식 API 권한·관심 계정이 제공되지 않아 기본 비활성입니다. 검색 기능을 우회 구현하지 않습니다. Threads 공식 API의 계정 기반 지원 범위는 앱 권한에 따라 달라집니다.
@@ -63,7 +63,9 @@ glean-ai health
 
 ## 점수와 요약
 
-`final = relevance×0.35 + trend×0.30 + quality×0.20 + freshness×0.15`; 전부 0~100입니다. 참여량은 source 내부 최대값으로 정규화하며 각 요소를 `score_reasons` JSON에 보존합니다. LLM은 외부 본문을 데이터로 명시하고 구조화 JSON을 검증합니다. 2회 실패 또는 키 미설정 시 규칙 기반 제목·요약으로 계속합니다.
+`final = relevance×0.35 + trend×0.30 + quality×0.20 + freshness×0.15`; 전부 0~100입니다. 참여량은 source 내부 최대값으로 정규화하며 각 요소를 `score_reasons` JSON에 보존합니다. 보고서는 점수순 후보에서 Product·Dev·Design 항목을 우선 확보하고 한 source가 전체의 40%를 넘지 않도록 최대 10건을 고릅니다. 따라서 후보가 한 source에만 몰린 날에는 억지로 10건을 채우지 않습니다.
+
+LLM은 외부 본문을 데이터로 명시하고 구조화 JSON을 검증해 `무슨 소식인지`와 `왜 중요한지`를 한국어로 편집합니다. 2회 실패 또는 키 미설정 시에도 원문 태그를 복사하지 않고 source별 한국어 안내 문구로 계속합니다. 규칙 기반 fallback은 번역·해석이 아니라는 한계가 있습니다.
 
 ## Slack과 스케줄
 

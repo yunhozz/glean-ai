@@ -1,6 +1,7 @@
 import hashlib
 import math
 import re
+from collections import Counter
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -89,3 +90,40 @@ def score(items: list[Content], now: datetime | None = None) -> list[Content]:
 def process(items: list[Content], keywords: list[str]) -> list[Content]:
     relevant = [classify(item, keywords) for item in deduplicate(items)]
     return score([item for item in relevant if item.matched_keywords or item.categories])
+
+
+def select_report_items(items: list[Content], limit: int) -> list[Content]:
+    """Select a high-quality brief without letting one feed occupy the report."""
+    if limit <= 0:
+        return []
+
+    ranked = sorted(items, key=lambda item: item.final_score, reverse=True)
+    source_limit = max(1, math.ceil(limit * 0.4))
+    source_counts: Counter[str] = Counter()
+    selected: list[Content] = []
+    selected_ids: set[int] = set()
+
+    def add(item: Content) -> None:
+        selected.append(item)
+        selected_ids.add(id(item))
+        source_counts[item.source] += 1
+
+    # Preserve Product, Dev and Design coverage when suitable signals exist.
+    for area in ("기획", "개발", "디자인"):
+        candidate = next((
+            item for item in ranked
+            if id(item) not in selected_ids
+            and source_counts[item.source] < source_limit
+            and any(category.startswith(f"{area}/") for category in item.categories)
+        ), None)
+        if candidate:
+            add(candidate)
+
+    for item in ranked:
+        if len(selected) >= limit:
+            break
+        if id(item) in selected_ids or source_counts[item.source] >= source_limit:
+            continue
+        add(item)
+
+    return sorted(selected, key=lambda item: item.final_score, reverse=True)

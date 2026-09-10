@@ -1,7 +1,7 @@
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 
-from glean_ai.pipeline import canonical_url, deduplicate, process, score
+from glean_ai.pipeline import canonical_url, deduplicate, process, score, select_report_items
 
 
 def test_url_and_text_dedup(sample):
@@ -23,3 +23,34 @@ def test_freshness_changes_score(sample):
     old = deepcopy(sample)
     old.published_at = datetime.now(timezone.utc) - timedelta(days=8)
     assert score([sample])[0].freshness_score > score([old])[0].freshness_score
+
+
+def test_report_selection_balances_sources_and_areas(sample):
+    items = []
+    for index in range(8):
+        item = deepcopy(sample)
+        item.external_id = f"hf-{index}"
+        item.source = "huggingface"
+        item.final_score = 100 - index
+        item.categories = ["개발/모델"]
+        items.append(item)
+    for index, (source, category) in enumerate([
+        ("github", "기획/AI 제품 전략"),
+        ("github", "디자인/UX 패턴"),
+        ("reddit", "개발/에이전트"),
+        ("reddit", "기획/워크플로 자동화"),
+    ]):
+        item = deepcopy(sample)
+        item.external_id = f"other-{index}"
+        item.source = source
+        item.final_score = 80 - index
+        item.categories = [category]
+        items.append(item)
+
+    selected = select_report_items(items, 10)
+
+    assert len(selected) == 8
+    assert sum(item.source == "huggingface" for item in selected) == 4
+    assert {category.split("/", 1)[0] for item in selected for category in item.categories} == {
+        "기획", "개발", "디자인",
+    }

@@ -6,6 +6,7 @@ import httpx
 import typer
 
 from .config import get_settings
+from .pipeline import select_report_items
 from .reporters import SlackReporter, build_blocks
 from .service import DailyService, configure_logging
 from .storage import Store
@@ -43,7 +44,7 @@ async def _make_report(hours: int, send: bool, dry_run: bool, force: bool) -> li
     service, store, client = runtime()
     settings = get_settings()
     try:
-        items = service.recent(hours)[: settings.report_top_n]
+        items = select_report_items(service.recent(hours), settings.report_top_n)
         summarizer = Summarizer(client, settings.llm_api_key.get_secret_value() if settings.llm_api_key else None, settings.llm_base_url, settings.llm_model)
         summaries = await asyncio.gather(*(summarizer.summarize(item) for item in items))
         end = datetime.now(timezone.utc).astimezone(settings.tz)

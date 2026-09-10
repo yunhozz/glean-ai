@@ -25,6 +25,8 @@ async def test_llm_fallback_and_blocks(sample):
     blocks = build_blocks([(sample, summary)], datetime.now(timezone.utc) - timedelta(days=1), datetime.now(timezone.utc))
     assert blocks[0]["text"]["text"] == "오늘의 AI Product · Dev · Design Brief"
     assert any(sample.title in str(block) for block in blocks)
+    assert any("왜 중요한가" in str(block) for block in blocks)
+    assert "Open source workflow automation" not in str(blocks)
 
 
 @pytest.mark.asyncio
