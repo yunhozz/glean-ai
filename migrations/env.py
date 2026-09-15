@@ -3,6 +3,7 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from glean_ai.config import get_settings
+from glean_ai.migrations import adopt_legacy_schema
 from glean_ai.storage import Base
 
 config = context.config
@@ -19,6 +20,8 @@ def run_migrations_offline() -> None:
 def run_migrations_online() -> None:
     connectable = engine_from_config(config.get_section(config.config_ini_section, {}), prefix="sqlalchemy.", poolclass=pool.NullPool)
     with connectable.connect() as connection:
+        with connection.begin():
+            adopt_legacy_schema(connection)
         context.configure(connection=connection, target_metadata=target_metadata)
         with context.begin_transaction():
             context.run_migrations()
