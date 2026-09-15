@@ -16,7 +16,7 @@ class RedditCollector(Collector):
         limit: int = 100,
         client_id: str | None = None,
         client_secret: str | None = None,
-        user_agent: str = "glean-ai/0.1",
+        user_agent: str = "glean-ai/0.1 (contact: github.com/yunhozz/glean-ai)",
     ) -> None:
         super().__init__(client, limit)
         self.client_id = client_id
