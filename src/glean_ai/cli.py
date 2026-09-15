@@ -6,6 +6,7 @@ import httpx
 import typer
 
 from .config import get_settings
+from .models import CollectionResult, CollectionStatus
 from .pipeline import select_report_items
 from .reporters import SlackReporter, build_blocks
 from .service import DailyService, configure_logging
@@ -34,21 +35,42 @@ def collect(source: str | None = None, dry_run: bool = False) -> None:
     async def run() -> None:
         service, _, client = runtime()
         try:
-            typer.echo(json.dumps(await service.collect(source, dry_run), ensure_ascii=False))
+            results = await service.collect(source, dry_run)
+            typer.echo(json.dumps(
+                {name: result.model_dump(mode="json", exclude={"contents"}) for name, result in results.items()},
+                ensure_ascii=False,
+            ))
         finally:
             await client.aclose()
     asyncio.run(run())
 
 
-async def _make_report(hours: int, send: bool, dry_run: bool, force: bool) -> list[dict[str, object]]:
+async def _make_report(
+    hours: int,
+    send: bool,
+    dry_run: bool,
+    force: bool,
+    collection_results: dict[str, CollectionResult] | None = None,
+) -> list[dict[str, object]]:
     service, store, client = runtime()
     settings = get_settings()
     try:
-        items = select_report_items(service.recent(hours), settings.report_top_n)
+        preferred_sources = [
+            name for name, result in (collection_results or {}).items()
+            if result.status in {CollectionStatus.SUCCESS, CollectionStatus.PARTIAL}
+        ]
+        items = select_report_items(
+            service.recent(hours), settings.report_top_n, preferred_sources
+        )
         summarizer = Summarizer(client, settings.llm_api_key.get_secret_value() if settings.llm_api_key else None, settings.llm_base_url, settings.llm_model)
         summaries = await asyncio.gather(*(summarizer.summarize(item) for item in items))
         end = datetime.now(timezone.utc).astimezone(settings.tz)
-        blocks = build_blocks(list(zip(items, summaries, strict=True)), end - timedelta(hours=hours), end)
+        blocks = build_blocks(
+            list(zip(items, summaries, strict=True)),
+            end - timedelta(hours=hours),
+            end,
+            list(collection_results.values()) if collection_results is not None else None,
+        )
         if send:
             reporter = SlackReporter(store, client, settings.slack_webhook_url.get_secret_value() if settings.slack_webhook_url else None)
             await reporter.send(end.date(), blocks, force=force, dry_run=dry_run)
@@ -79,10 +101,23 @@ def daily(dry_run: bool = False, force: bool = False) -> None:
     async def run() -> None:
         service, _, client = runtime()
         try:
-            typer.echo(json.dumps(await service.collect(dry_run=dry_run), ensure_ascii=False))
+            results = await service.collect(dry_run=dry_run)
+            typer.echo(json.dumps(
+                {name: result.model_dump(mode="json", exclude={"contents"}) for name, result in results.items()},
+                ensure_ascii=False,
+            ))
         finally:
             await client.aclose()
-        typer.echo(json.dumps(await _make_report(24, True, dry_run, force), ensure_ascii=False))
+        unavailable = {
+            CollectionStatus.FAILED,
+            CollectionStatus.DISABLED,
+            CollectionStatus.NOT_CONFIGURED,
+        }
+        if all(result.status in unavailable for result in results.values()):
+            raise RuntimeError("all collection sources are unavailable")
+        typer.echo(json.dumps(
+            await _make_report(24, True, dry_run, force, results), ensure_ascii=False
+        ))
     asyncio.run(run())
 
 

@@ -20,13 +20,11 @@ class Settings(BaseSettings):
     reddit_client_id: SecretStr | None = None
     reddit_client_secret: SecretStr | None = None
     reddit_user_agent: str = "glean-ai/0.1"
-    x_bearer_token: SecretStr | None = None
     threads_access_token: SecretStr | None = None
     github_enabled: bool = True
     huggingface_enabled: bool = True
     reddit_enabled: bool = True
-    x_enabled: bool = False
-    threads_enabled: bool = False
+    threads_enabled: bool = True
     source_limit: int = 100
     request_timeout_seconds: float = 20
     timezone: str = "Asia/Seoul"

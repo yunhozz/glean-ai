@@ -5,9 +5,10 @@ from datetime import datetime, timedelta, timezone
 import httpx
 import structlog
 
-from .collectors import GitHubCollector, HuggingFaceCollector, RedditCollector
+from .collectors import GitHubCollector, HuggingFaceCollector, RedditCollector, ThreadsCollector
+from .collectors.base import CollectorError
 from .config import Settings
-from .models import Content
+from .models import CollectionResult, CollectionStatus, Content
 from .pipeline import process
 from .storage import RunRow, Store
 
@@ -28,24 +29,53 @@ class DailyService:
         self.settings, self.store, self.client = settings, store, client
 
     def collectors(self) -> dict[str, object]:
-        self.client.headers.update({"User-Agent": self.settings.reddit_user_agent})
         github_token = (
             self.settings.github_token.get_secret_value() if self.settings.github_token else None
+        )
+        huggingface_token = (
+            self.settings.huggingface_token.get_secret_value()
+            if self.settings.huggingface_token else None
+        )
+        reddit_client_id = (
+            self.settings.reddit_client_id.get_secret_value()
+            if self.settings.reddit_client_id else None
+        )
+        reddit_client_secret = (
+            self.settings.reddit_client_secret.get_secret_value()
+            if self.settings.reddit_client_secret else None
+        )
+        threads_token = (
+            self.settings.threads_access_token.get_secret_value()
+            if self.settings.threads_access_token else None
         )
         return {
             "github": GitHubCollector(
                 self.client, self.settings.source_limit, token=github_token
             ),
-            "huggingface": HuggingFaceCollector(self.client, self.settings.source_limit),
-            "reddit": RedditCollector(self.client, self.settings.source_limit),
+            "huggingface": HuggingFaceCollector(
+                self.client, self.settings.source_limit, token=huggingface_token
+            ),
+            "reddit": RedditCollector(
+                self.client,
+                self.settings.source_limit,
+                client_id=reddit_client_id,
+                client_secret=reddit_client_secret,
+                user_agent=self.settings.reddit_user_agent,
+            ),
+            "threads": ThreadsCollector(
+                self.client, self.settings.source_limit, token=threads_token
+            ),
         }
 
-    async def collect(self, source: str | None = None, dry_run: bool = False) -> dict[str, str]:
+    async def collect(
+        self, source: str | None = None, dry_run: bool = False
+    ) -> dict[str, CollectionResult]:
         interests = self.settings.interests()
         enabled = {
             "github": self.settings.github_enabled,
             "huggingface": self.settings.huggingface_enabled,
             "reddit": self.settings.reddit_enabled,
+            "threads": self.settings.threads_enabled,
         }
         selected = self.collectors()
         if source:
@@ -57,29 +87,78 @@ class DailyService:
         )
         return dict(results)
 
-    async def _collect_one(self, name: str, collector: object, interests: dict[str, list[str]], enabled: bool, dry_run: bool) -> tuple[str, str]:
+    async def _collect_one(
+        self,
+        name: str,
+        collector: object,
+        interests: dict[str, list[str]],
+        enabled: bool,
+        dry_run: bool,
+    ) -> tuple[str, CollectionResult]:
         started = datetime.now(timezone.utc)
         if not enabled:
             log.warning("source_disabled", source=name)
-            return name, "disabled"
+            result = CollectionResult(source=name, status=CollectionStatus.DISABLED)
+            self._record(result, started, dry_run)
+            return name, result
         try:
             contents: list[Content] = await collector.collect(interests)  # type: ignore[attr-defined]
+            fetched_count = len(contents)
             contents = process(contents, interests.get("keywords", []))
             inserted = 0 if dry_run else sum(self.store.upsert(item) for item in contents)
-            status = f"success:{inserted}/{len(contents)}"
-            self._record(name, status, started, None, dry_run)
-            return name, status
+            partial_errors = collector.partial_errors  # type: ignore[attr-defined]
+            status = (
+                CollectionStatus.PARTIAL if partial_errors
+                else CollectionStatus.SUCCESS if contents
+                else CollectionStatus.EMPTY
+            )
+            error = partial_errors[0] if partial_errors else None
+            result = CollectionResult(
+                source=name,
+                status=status,
+                contents=contents,
+                fetched_count=fetched_count,
+                accepted_count=len(contents),
+                error_code=error.code if error else None,
+                error_message=str(error) if error else None,
+            )
+            self._record(result, started, dry_run)
+            log.info("source_collected", source=name, status=status, inserted=inserted)
+            return name, result
         except Exception as exc:
-            safe_error = str(exc).replace("Authorization", "[REDACTED]")[:1000]
+            error_code = exc.code if isinstance(exc, CollectorError) else "unexpected"
+            safe_error = str(exc)[:200] if isinstance(exc, CollectorError) else type(exc).__name__
+            status = (
+                CollectionStatus.NOT_CONFIGURED
+                if error_code == "not_configured" else CollectionStatus.FAILED
+            )
             log.error("source_failed", source=name, error=safe_error)
-            self._record(name, "failed", started, safe_error, dry_run)
-            return name, "failed"
+            result = CollectionResult(
+                source=name,
+                status=status,
+                error_code=error_code,
+                error_message=safe_error,
+            )
+            self._record(result, started, dry_run)
+            return name, result
 
-    def _record(self, source: str, status: str, started: datetime, error: str | None, dry_run: bool) -> None:
+    def _record(
+        self, result: CollectionResult, started: datetime, dry_run: bool
+    ) -> None:
         if dry_run:
             return
         with self.store.session() as session:
-            session.add(RunRow(kind="collect", source=source, status=status, started_at=started, finished_at=datetime.now(timezone.utc), error=error))
+            session.add(RunRow(
+                kind="collect",
+                source=result.source,
+                status=result.status,
+                started_at=started,
+                finished_at=datetime.now(timezone.utc),
+                error=result.error_message,
+                error_code=result.error_code,
+                fetched_count=result.fetched_count,
+                accepted_count=result.accepted_count,
+            ))
 
     def recent(self, hours: int = 24) -> list[Content]:
         rows = self.store.recent(datetime.now(timezone.utc) - timedelta(hours=hours))

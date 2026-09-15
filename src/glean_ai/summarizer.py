@@ -68,6 +68,10 @@ class Summarizer:
             title = f"AI 커뮤니티 논의: {content.title}"
             summary = f"Reddit AI 커뮤니티에서 {content.title} 주제의 새 논의가 올라왔습니다."
             why_important = "현업 사용자들의 반응과 쟁점을 탐색할 수 있는 커뮤니티 신호입니다."
+        elif content.source == "threads":
+            title = f"Threads 논의: {content.title}"
+            summary = f"Threads에서 {content.title} 주제의 새 공개 게시물이 포착됐습니다."
+            why_important = "빠르게 확산되는 사용자 반응과 제품 담론을 살펴볼 수 있는 신호입니다."
         else:
             title = content.title
             summary = f"{area_text} 관심 영역과 관련된 새 공개 신호가 포착됐습니다."

@@ -92,7 +92,9 @@ def process(items: list[Content], keywords: list[str]) -> list[Content]:
     return score([item for item in relevant if item.matched_keywords or item.categories])
 
 
-def select_report_items(items: list[Content], limit: int) -> list[Content]:
+def select_report_items(
+    items: list[Content], limit: int, preferred_sources: list[str] | None = None
+) -> list[Content]:
     """Select a high-quality brief without letting one feed occupy the report."""
     if limit <= 0:
         return []
@@ -107,6 +109,17 @@ def select_report_items(items: list[Content], limit: int) -> list[Content]:
         selected.append(item)
         selected_ids.add(id(item))
         source_counts[item.source] += 1
+
+    # Give every healthy source with a suitable candidate visible representation.
+    for source in preferred_sources or []:
+        candidate = next((
+            item for item in ranked
+            if id(item) not in selected_ids
+            and item.source == source
+            and (item.matched_keywords or item.categories)
+        ), None)
+        if candidate and len(selected) < limit:
+            add(candidate)
 
     # Preserve Product, Dev and Design coverage when suitable signals exist.
     for area in ("기획", "개발", "디자인"):

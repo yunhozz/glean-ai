@@ -1,5 +1,7 @@
 from datetime import datetime
 
+import httpx
+
 from pydantic import HttpUrl
 
 from ..models import Content, Metrics
@@ -9,10 +11,18 @@ from .base import Collector
 class HuggingFaceCollector(Collector):
     source = "huggingface"
 
+    def __init__(
+        self, client: httpx.AsyncClient, limit: int = 100, token: str | None = None
+    ) -> None:
+        super().__init__(client, limit)
+        self.token = token
+
     async def collect(self, interests: dict[str, list[str]]) -> list[Content]:
+        headers = {"Authorization": f"Bearer {self.token}"} if self.token else None
         data = await self.get_json(
             "https://huggingface.co/api/models",
             params={"sort": "lastModified", "direction": -1, "limit": self.limit, "full": "true"},
+            headers=headers,
         )
         return [Content(
             source=self.source, external_id=item["id"], content_type="model",

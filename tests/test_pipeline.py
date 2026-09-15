@@ -54,3 +54,22 @@ def test_report_selection_balances_sources_and_areas(sample):
     assert {category.split("/", 1)[0] for item in selected for category in item.categories} == {
         "기획", "개발", "디자인",
     }
+
+
+def test_report_selection_includes_each_healthy_source(sample):
+    items = []
+    for index, source in enumerate(["github", "reddit", "huggingface", "threads"]):
+        item = deepcopy(sample)
+        item.external_id = str(index)
+        item.source = source
+        item.final_score = 100 - index * 20
+        item.categories = ["개발/에이전트"]
+        items.append(item)
+
+    selected = select_report_items(
+        items, 4, ["github", "reddit", "huggingface", "threads"]
+    )
+
+    assert {item.source for item in selected} == {
+        "github", "reddit", "huggingface", "threads",
+    }

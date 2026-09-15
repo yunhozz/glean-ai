@@ -9,12 +9,19 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 from ..models import Content
 
 
+class CollectorError(RuntimeError):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
 class Collector(ABC):
     source: str
 
     def __init__(self, client: httpx.AsyncClient, limit: int = 100) -> None:
         self.client = client
         self.limit = limit
+        self.partial_errors: list[CollectorError] = []
 
     @abstractmethod
     async def collect(self, interests: dict[str, list[str]]) -> list[Content]: ...
@@ -27,6 +34,19 @@ class Collector(ABC):
     )
     async def get_json(self, url: str, **kwargs: Any) -> Any:
         response = await self.client.get(url, **kwargs)
+        return await self._response_json(response)
+
+    @retry(
+        retry=retry_if_exception_type((httpx.TimeoutException, httpx.TransportError)),
+        wait=wait_exponential(min=1, max=8),
+        stop=stop_after_attempt(3),
+        reraise=True,
+    )
+    async def post_json(self, url: str, **kwargs: Any) -> Any:
+        response = await self.client.post(url, **kwargs)
+        return await self._response_json(response)
+
+    async def _response_json(self, response: httpx.Response) -> Any:
         if response.status_code == 429:
             retry_after = response.headers.get("Retry-After")
             if retry_after:
@@ -37,9 +57,24 @@ class Collector(ABC):
                         response.headers["Date"]
                     )).total_seconds())
                 await _sleep(seconds)
-            response.raise_for_status()
-        response.raise_for_status()
-        return response.json()
+        self.check_response(response)
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise CollectorError("invalid_response", "Invalid JSON response") from exc
+
+    @staticmethod
+    def check_response(response: httpx.Response) -> None:
+        if response.status_code < 400:
+            return
+        code = {
+            400: "invalid_request",
+            401: "authentication",
+            403: "permission",
+            422: "invalid_query",
+            429: "rate_limited",
+        }.get(response.status_code, "http_error")
+        raise CollectorError(code, f"HTTP {response.status_code}")
 
 
 _sleep: Callable[[float], Awaitable[None]]

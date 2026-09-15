@@ -3,10 +3,15 @@ from typing import Any
 
 import httpx
 
-from .models import Content, TopicSummary
+from .models import CollectionResult, CollectionStatus, Content, TopicSummary
 from .storage import ReportRow, Store
 
-SOURCE_LABELS = {"github": "GitHub", "huggingface": "Hugging Face", "reddit": "Reddit"}
+SOURCE_LABELS = {
+    "github": "GitHub",
+    "huggingface": "Hugging Face",
+    "reddit": "Reddit",
+    "threads": "Threads",
+}
 METRIC_LABELS = {
     "likes": "좋아요", "comments": "댓글", "shares": "공유", "views": "조회",
     "stars": "스타", "forks": "포크", "downloads": "다운로드",
@@ -19,7 +24,12 @@ def _area_label(content: Content, summary: TopicSummary) -> str:
     return " · ".join(dict.fromkeys(areas + details)) or "AI"
 
 
-def build_blocks(rows: list[tuple[Content, TopicSummary]], start: datetime, end: datetime) -> list[dict[str, Any]]:
+def build_blocks(
+    rows: list[tuple[Content, TopicSummary]],
+    start: datetime,
+    end: datetime,
+    collection_results: list[CollectionResult] | None = None,
+) -> list[dict[str, Any]]:
     area_counts = {area: 0 for area in ("기획", "개발", "디자인")}
     source_counts: dict[str, int] = {}
     for content, summary in rows:
@@ -36,6 +46,30 @@ def build_blocks(rows: list[tuple[Content, TopicSummary]], start: datetime, end:
         {"type": "context", "elements": [{"type": "mrkdwn", "text": f"집계: {start:%Y-%m-%d %H:%M} ~ {end:%Y-%m-%d %H:%M}"}]},
         {"type": "context", "elements": [{"type": "mrkdwn", "text": f"구성: {composition or '분류 없음'}  |  출처: {sources or '없음'}"}]},
     ]
+    if collection_results is not None:
+        status_text = " · ".join(
+            f"{SOURCE_LABELS.get(result.source, result.source)} "
+            f"{_collection_status_label(result)}"
+            for result in collection_results
+        )
+        blocks.append({
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": f"수집 상태: {status_text}"}],
+        })
+        warnings = [
+            f"{SOURCE_LABELS.get(result.source, result.source)} {_warning_label(result)}"
+            for result in collection_results
+            if result.status in {
+                CollectionStatus.PARTIAL,
+                CollectionStatus.FAILED,
+                CollectionStatus.NOT_CONFIGURED,
+            }
+        ]
+        if warnings:
+            blocks.append({
+                "type": "context",
+                "elements": [{"type": "mrkdwn", "text": f"주의: {', '.join(warnings)}"}],
+            })
     for rank, (content, summary) in enumerate(rows, 1):
         metrics = ", ".join(
             f"{METRIC_LABELS.get(key, key)} {value:,}"
@@ -50,6 +84,36 @@ def build_blocks(rows: list[tuple[Content, TopicSummary]], start: datetime, end:
         blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": text[:2900]}})
     blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": f"생성: {end:%Y-%m-%d %H:%M %Z}"}]})
     return blocks
+
+
+def _status_label(status: CollectionStatus) -> str:
+    return {
+        CollectionStatus.EMPTY: "검색 결과 없음",
+        CollectionStatus.PARTIAL: "일부 실패",
+        CollectionStatus.FAILED: "실패",
+        CollectionStatus.DISABLED: "비활성화",
+        CollectionStatus.NOT_CONFIGURED: "설정 필요",
+        CollectionStatus.SUCCESS: "성공",
+    }[status]
+
+
+def _collection_status_label(result: CollectionResult) -> str:
+    if result.status in {CollectionStatus.SUCCESS, CollectionStatus.PARTIAL}:
+        return f"{result.accepted_count}건"
+    return _status_label(result.status)
+
+
+def _warning_label(result: CollectionResult) -> str:
+    cause = {
+        "authentication": "인증 실패",
+        "permission": "권한 오류",
+        "rate_limited": "호출 한도 초과",
+        "invalid_query": "검색 요청 오류",
+        "invalid_response": "응답 형식 오류",
+        "transport": "네트워크 오류",
+        "not_configured": "설정 필요",
+    }.get(result.error_code or "")
+    return cause or _status_label(result.status)
 
 
 class SlackReporter:

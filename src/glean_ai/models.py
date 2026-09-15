@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field, HttpUrl
@@ -51,3 +52,22 @@ class TopicSummary(BaseModel):
     areas: list[str]
     why_important: str
     uncertainty: str | None = None
+
+
+class CollectionStatus(StrEnum):
+    SUCCESS = "success"
+    EMPTY = "empty"
+    PARTIAL = "partial"
+    FAILED = "failed"
+    DISABLED = "disabled"
+    NOT_CONFIGURED = "not_configured"
+
+
+class CollectionResult(BaseModel):
+    source: str
+    status: CollectionStatus
+    contents: list[Content] = Field(default_factory=list)
+    fetched_count: int = 0
+    accepted_count: int = 0
+    error_code: str | None = None
+    error_message: str | None = None

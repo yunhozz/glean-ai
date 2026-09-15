@@ -49,6 +49,9 @@ class RunRow(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error: Mapped[str | None] = mapped_column(Text)
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    fetched_count: Mapped[int] = mapped_column(default=0)
+    accepted_count: Mapped[int] = mapped_column(default=0)
 
 
 class ReportRow(Base):

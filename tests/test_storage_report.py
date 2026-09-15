@@ -5,6 +5,7 @@ import pytest
 import respx
 
 from glean_ai.reporters import SlackReporter, build_blocks
+from glean_ai.models import CollectionResult, CollectionStatus
 from glean_ai.storage import Store
 from glean_ai.summarizer import Summarizer
 
@@ -27,6 +28,30 @@ async def test_llm_fallback_and_blocks(sample):
     assert any(sample.title in str(block) for block in blocks)
     assert any("왜 중요한가" in str(block) for block in blocks)
     assert "Open source workflow automation" not in str(blocks)
+
+
+def test_blocks_show_partial_collection_status():
+    now = datetime.now(timezone.utc)
+    blocks = build_blocks([], now - timedelta(days=1), now, [
+        CollectionResult(
+            source="github", status=CollectionStatus.SUCCESS, accepted_count=3
+        ),
+        CollectionResult(
+            source="reddit",
+            status=CollectionStatus.FAILED,
+            error_code="authentication",
+            error_message="HTTP 401",
+        ),
+        CollectionResult(source="huggingface", status=CollectionStatus.EMPTY),
+        CollectionResult(source="threads", status=CollectionStatus.NOT_CONFIGURED),
+    ])
+    text = str(blocks)
+    assert "GitHub 3건" in text
+    assert "Reddit 실패" in text
+    assert "Reddit 인증 실패" in text
+    assert "Hugging Face 검색 결과 없음" in text
+    assert "Threads 설정 필요" in text
+    assert "HTTP 401" not in text
 
 
 @pytest.mark.asyncio
