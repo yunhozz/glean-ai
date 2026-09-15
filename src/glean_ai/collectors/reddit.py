@@ -1,10 +1,15 @@
-from datetime import datetime, timezone
+import html
+import re
+from datetime import datetime
+from xml.etree import ElementTree
 
 import httpx
 from pydantic import HttpUrl
 
-from ..models import Content, Metrics
+from ..models import Content
 from .base import Collector, CollectorError
+
+ATOM = {"atom": "http://www.w3.org/2005/Atom"}
 
 
 class RedditCollector(Collector):
@@ -14,49 +19,51 @@ class RedditCollector(Collector):
         self,
         client: httpx.AsyncClient,
         limit: int = 100,
-        client_id: str | None = None,
-        client_secret: str | None = None,
         user_agent: str = "glean-ai/0.1 (contact: github.com/yunhozz/glean-ai)",
     ) -> None:
         super().__init__(client, limit)
-        self.client_id = client_id
-        self.client_secret = client_secret
         self.user_agent = user_agent
 
-    async def access_token(self) -> str:
-        if not self.client_id or not self.client_secret:
-            raise CollectorError("not_configured", "Reddit credentials are not configured")
-        data = await self.post_json(
-            "https://www.reddit.com/api/v1/access_token",
-            data={"grant_type": "client_credentials"},
-            auth=httpx.BasicAuth(self.client_id, self.client_secret),
+    async def collect(self, interests: dict[str, list[str]]) -> list[Content]:
+        self.partial_errors = []
+        subreddits = interests.get("subreddits", ["artificial"])
+        feed = "+".join(subreddits)
+        document = await self.get_text(
+            f"https://www.reddit.com/r/{feed}/new/.rss",
             headers={"User-Agent": self.user_agent},
         )
-        try:
-            token = data["access_token"]
-        except (TypeError, KeyError) as exc:
-            raise CollectorError("invalid_response", "Reddit token response is invalid") from exc
-        return str(token)
+        found = {item.external_id: item for item in self._parse(document)}
+        return list(found.values())[:self.limit]
 
-    async def collect(self, interests: dict[str, list[str]]) -> list[Content]:
-        token = await self.access_token()
-        subreddits = interests.get("subreddits", ["artificial"])
-        data = await self.get_json(
-            f"https://oauth.reddit.com/r/{'+'.join(subreddits)}/new",
-            params={"limit": self.limit},
-            headers={"Authorization": f"Bearer {token}", "User-Agent": self.user_agent},
-        )
-        result = []
-        for child in data.get("data", {}).get("children", []):
-            item = child["data"]
-            if item.get("removed_by_category") or item.get("selftext") in {"[removed]", "[deleted]"}:
+    def _parse(self, document: str) -> list[Content]:
+        try:
+            root = ElementTree.fromstring(document)
+        except ElementTree.ParseError as exc:
+            raise CollectorError("invalid_response", "Invalid Reddit RSS response") from exc
+        output = []
+        for entry in root.findall("atom:entry", ATOM):
+            external_id = entry.findtext("atom:id", default="", namespaces=ATOM)
+            title = entry.findtext("atom:title", default="", namespaces=ATOM)
+            published = entry.findtext("atom:published", namespaces=ATOM)
+            link = entry.find("atom:link", ATOM)
+            if not external_id or not title or not published or link is None:
                 continue
-            result.append(Content(
-                source=self.source, external_id=item["id"], content_type="post",
-                author=item.get("author"), title=item["title"], body=item.get("selftext", ""),
-                url=HttpUrl(f"https://reddit.com{item['permalink']}"),
-                published_at=datetime.fromtimestamp(item["created_utc"], tz=timezone.utc),
-                metrics=Metrics(likes=item.get("score", 0), comments=item.get("num_comments", 0)),
-                raw_metadata={"subreddit": item["subreddit"], "crosspost_parent": item.get("crosspost_parent")},
+            author = entry.findtext("atom:author/atom:name", namespaces=ATOM)
+            content = entry.findtext("atom:content", default="", namespaces=ATOM)
+            body = html.unescape(re.sub(r"<[^>]+>", " ", content))
+            body = re.sub(r"\s+", " ", body).strip()
+            subreddit_match = re.search(r"/r/([^/]+)/", link.attrib["href"])
+            output.append(Content(
+                source=self.source,
+                external_id=external_id,
+                content_type="post",
+                author=author,
+                title=title,
+                body=body,
+                url=HttpUrl(link.attrib["href"]),
+                published_at=datetime.fromisoformat(published.replace("Z", "+00:00")),
+                raw_metadata={
+                    "subreddit": subreddit_match.group(1) if subreddit_match else None
+                },
             ))
-        return result
+        return output

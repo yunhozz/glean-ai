@@ -42,11 +42,29 @@ class Collector(ABC):
         stop=stop_after_attempt(3),
         reraise=True,
     )
+    async def get_text(self, url: str, **kwargs: Any) -> str:
+        response = await self.client.get(url, **kwargs)
+        await self._prepare_response(response)
+        return response.text
+
+    @retry(
+        retry=retry_if_exception_type((httpx.TimeoutException, httpx.TransportError)),
+        wait=wait_exponential(min=1, max=8),
+        stop=stop_after_attempt(3),
+        reraise=True,
+    )
     async def post_json(self, url: str, **kwargs: Any) -> Any:
         response = await self.client.post(url, **kwargs)
         return await self._response_json(response)
 
     async def _response_json(self, response: httpx.Response) -> Any:
+        await self._prepare_response(response)
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise CollectorError("invalid_response", "Invalid JSON response") from exc
+
+    async def _prepare_response(self, response: httpx.Response) -> None:
         if response.status_code == 429:
             retry_after = response.headers.get("Retry-After")
             if retry_after:
@@ -58,10 +76,6 @@ class Collector(ABC):
                     )).total_seconds())
                 await _sleep(seconds)
         self.check_response(response)
-        try:
-            return response.json()
-        except ValueError as exc:
-            raise CollectorError("invalid_response", "Invalid JSON response") from exc
 
     @staticmethod
     def check_response(response: httpx.Response) -> None:

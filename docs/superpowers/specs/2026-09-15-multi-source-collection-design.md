@@ -20,7 +20,7 @@ X는 종량제 비용이 발생하므로 운영 대상에서 제외한다. 비�
 ### 포함
 
 - GitHub 검색 쿼리 분할과 결과 병합
-- Reddit app-only OAuth 인증 및 공식 API 조회
+- Reddit 공식 공개 RSS 조회
 - Hugging Face 토큰 적용
 - Threads 공식 Keyword Search API 연동
 - 소스별 구조화된 수집 상태
@@ -53,9 +53,9 @@ GitHub 토큰은 GitHub 요청의 `Authorization` 헤더에만 넣는다. 한 �
 
 ### Reddit
 
-`REDDIT_CLIENT_ID`와 `REDDIT_CLIENT_SECRET`으로 app-only OAuth 토큰을 발급받는다. 토큰 발급 후 `oauth.reddit.com`에서 설정된 subreddit의 최신 게시물을 조회한다. `REDDIT_USER_AGENT`는 앱과 연락 주체를 구분할 수 있는 고유한 값이어야 한다.
+Reddit의 신규 Legacy Data API 앱은 moderation 용도에 한해 별도 승인이 필요하므로 일반 AI 브리핑에는 사용하지 않는다. 설정된 subreddit의 공식 공개 Atom RSS에서 최신 게시물을 조회한다. `REDDIT_USER_AGENT`는 앱과 연락 주체를 구분할 수 있는 고유한 값이어야 한다.
 
-발급된 토큰은 한 번의 daily 실행 안에서 재사용한다. 토큰 발급 실패와 콘텐츠 조회 실패는 서로 다른 단계로 기록하지만 사용자에게는 토큰이나 응답 본문을 노출하지 않는다.
+여러 subreddit을 하나의 multi-subreddit RSS 요청으로 묶어 호출 제한을 줄인다. RSS가 제공하는 제목, 본문, 작성자, URL과 게시 시각을 정규화하고 URL에서 원래 subreddit을 복원한다. 좋아요와 댓글 지표는 RSS에서 제공하지 않으므로 0으로 둔다.
 
 ### Hugging Face
 
@@ -111,7 +111,7 @@ Meta App에서 발급한 장기 Threads User Access Token을 사용한다. 앱�
 
 ```text
 수집 상태: GitHub 23건 · Reddit 실패 · Hugging Face 18건 · Threads 7건
-주의: Reddit 인증에 실패해 이번 브리핑에서 제외됐습니다
+주의: Reddit RSS 응답 오류로 이번 브리핑에서 제외됐습니다
 ```
 
 사용자 메시지에는 플랫폼, 상태, 짧은 조치 가능 원인만 포함한다. URL, 토큰, Authorization 헤더, 외부 응답 본문은 포함하지 않는다. 상세 오류는 비밀정보를 정제한 후 실행 이력과 GitHub Actions 로그에 남긴다.
@@ -131,13 +131,11 @@ Meta App에서 발급한 장기 Threads User Access Token을 사용한다. 앱�
 GitHub Actions Secrets에서 다음 값을 주입한다.
 
 - `GITHUB_TOKEN`
-- `REDDIT_CLIENT_ID`
-- `REDDIT_CLIENT_SECRET`
 - `REDDIT_USER_AGENT`
 - `HUGGINGFACE_TOKEN`
 - `THREADS_ACCESS_TOKEN`
 
-GitHub, Reddit, Hugging Face, Threads는 기본 활성화한다. 필수 자격증명이 없는 Reddit과 Threads는 `not_configured`가 된다. GitHub는 공개 검색이 가능하지만 인증 토큰 사용을 운영 기본값으로 한다. Hugging Face는 토큰 없이도 공개 조회를 허용한다.
+GitHub, Reddit, Hugging Face, Threads는 기본 활성화한다. 필수 자격증명이 없는 Threads는 `not_configured`가 된다. GitHub는 공개 검색이 가능하지만 인증 토큰 사용을 운영 기본값으로 한다. Reddit과 Hugging Face는 자격증명 없이 공개 조회한다.
 
 X 관련 토큰과 enable 설정은 제거하고 README에 비용 때문에 운영 범위에서 제외한다고 기록한다.
 
@@ -153,8 +151,8 @@ X 관련 토큰과 enable 설정은 제거하고 README에 비용 때문에 운�
 
 - GitHub 키워드가 API 제한 이하의 여러 쿼리로 분할되는지 검증한다.
 - GitHub 검색 묶음 간 중복 repository가 한 번만 남는지 검증한다.
-- Reddit이 토큰을 먼저 발급하고 `oauth.reddit.com`에 Bearer Token을 보내는지 검증한다.
-- Reddit 토큰 발급 오류와 콘텐츠 조회 오류를 구분한다.
+- Reddit이 subreddit별 공식 RSS를 조회하고 Atom 항목을 정규화하는지 검증한다.
+- Reddit이 여러 subreddit을 하나의 RSS 요청으로 묶고 원래 subreddit을 복원하는지 검증한다.
 - Hugging Face 토큰이 해당 호스트에만 전달되며 토큰 없는 공개 조회도 가능한지 검증한다.
 - Threads의 `RECENT` 검색, 페이지네이션, 정규화와 키워드 간 중복 제거를 검증한다.
 - 각 소스의 `401`, `403`, `429`, `422`, timeout과 잘못된 JSON 응답을 검증한다.
@@ -183,7 +181,7 @@ X 관련 토큰과 enable 설정은 제거하고 README에 비용 때문에 운�
 
 ## 운영 준비 사항
 
-- Reddit API 앱을 등록하고 Client ID, Client Secret, 고유 User-Agent를 준비한다.
+- Reddit 공개 RSS 요청에 사용할 고유 User-Agent를 확인한다.
 - Meta App에 Threads 사용 사례를 추가하고 필요한 권한에 대한 App Review를 완료한다.
 - 장기 Threads User Access Token을 발급하고 만료 전에 교체하는 운영 절차를 정한다.
 - 배포 후 첫 daily 실행에서 네 소스의 상태와 건수를 확인한다.

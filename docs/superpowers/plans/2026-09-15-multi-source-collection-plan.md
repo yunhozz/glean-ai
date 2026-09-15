@@ -74,7 +74,7 @@ UV_CACHE_DIR=/tmp/glean-ai-uv-cache uv run pytest tests/test_collector_base.py
 UV_CACHE_DIR=/tmp/glean-ai-uv-cache uv run pytest tests/test_collectors.py tests/test_service.py -k github
 ```
 
-## 작업 4: Reddit 공식 OAuth 조회 구현
+## 작업 4: Reddit 공식 공개 RSS 조회 구현
 
 대상 파일:
 
@@ -86,11 +86,11 @@ UV_CACHE_DIR=/tmp/glean-ai-uv-cache uv run pytest tests/test_collectors.py tests
 
 진행:
 
-1. Client Credentials로 토큰 endpoint를 호출하고 한 실행에서 토큰을 재사용하는 테스트를 작성한다.
-2. 콘텐츠 요청이 `oauth.reddit.com`과 Bearer Token, 고유 User-Agent를 사용하는지 검증한다.
-3. 토큰 발급 실패, 조회 실패, 제거된 게시물 필터링 테스트를 작성한다.
-4. Reddit Collector에 자격증명과 User-Agent를 명시적으로 주입한다.
-5. 자격증명이 없으면 외부 호출 없이 `not_configured`가 되는 서비스 동작을 구현한다.
+1. multi-subreddit 공식 Atom RSS endpoint와 고유 User-Agent 사용을 검증한다.
+2. 제목, 본문, 작성자, URL과 게시 시각의 정규화를 테스트한다.
+3. 여러 RSS의 중복 제거와 전체 수집 상한을 검증한다.
+4. 항목 URL에서 원래 subreddit을 복원한다.
+5. Reddit Client ID와 Secret 설정을 제거한다.
 
 검증:
 
@@ -224,7 +224,7 @@ UV_CACHE_DIR=/tmp/glean-ai-uv-cache uv run pytest
 
 1. 전체 테스트와 정적 검사를 실행한다.
 2. Alembic migration이 빈 DB와 기존 0001 DB 모두에서 적용되는지 확인한다.
-3. 실제 Secret 없이 dry-run하여 Reddit과 Threads가 `not_configured`이고 GitHub와 Hugging Face가 독립적으로 실행되는지 확인한다.
+3. 실제 Secret 없이 dry-run하여 Reddit 공개 RSS와 GitHub, Hugging Face가 독립적으로 실행되고 Threads가 `not_configured`인지 확인한다.
 4. GitHub Actions workflow 구문과 Docker Compose 설정을 검증한다.
 5. 변경 파일이 승인된 설계 범위에만 해당하는지 diff를 검토한다.
 
@@ -240,9 +240,8 @@ git diff --check
 
 ## 배포 후 확인
 
-1. Reddit 앱 자격증명과 고유 User-Agent를 GitHub Actions Secrets에 등록한다.
-2. Meta App Review 완료 후 장기 Threads Access Token을 등록한다.
-3. workflow를 수동 실행하여 네 소스 상태와 수집 건수를 확인한다.
-4. Slack에 각 성공 소스의 적합한 항목이 최소 한 건씩 포함되는지 확인한다.
-5. 테스트용으로 한 소스의 자격증명을 일시적으로 제외한 실행에서 부분 실패 경고가 표시되는지 확인한다.
-6. 정상 Secret으로 복구하고 재실행하여 최종 운영 상태를 확인한다.
+1. Meta App Review 완료 후 장기 Threads Access Token을 등록한다.
+2. workflow를 수동 실행하여 네 소스 상태와 수집 건수를 확인한다.
+3. Slack에 각 성공 소스의 적합한 항목이 최소 한 건씩 포함되는지 확인한다.
+4. 테스트용으로 Threads 자격증명을 일시적으로 제외한 실행에서 부분 실패 경고가 표시되는지 확인한다.
+5. 정상 Secret으로 복구하고 재실행하여 최종 운영 상태를 확인한다.

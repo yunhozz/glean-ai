@@ -36,14 +36,6 @@ class DailyService:
             self.settings.huggingface_token.get_secret_value()
             if self.settings.huggingface_token else None
         )
-        reddit_client_id = (
-            self.settings.reddit_client_id.get_secret_value()
-            if self.settings.reddit_client_id else None
-        )
-        reddit_client_secret = (
-            self.settings.reddit_client_secret.get_secret_value()
-            if self.settings.reddit_client_secret else None
-        )
         threads_token = (
             self.settings.threads_access_token.get_secret_value()
             if self.settings.threads_access_token else None
@@ -58,8 +50,6 @@ class DailyService:
             "reddit": RedditCollector(
                 self.client,
                 self.settings.source_limit,
-                client_id=reddit_client_id,
-                client_secret=reddit_client_secret,
                 user_agent=self.settings.reddit_user_agent,
             ),
             "threads": ThreadsCollector(

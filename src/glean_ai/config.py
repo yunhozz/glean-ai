@@ -17,8 +17,6 @@ class Settings(BaseSettings):
     llm_model: str = "gpt-4.1-mini"
     github_token: SecretStr | None = None
     huggingface_token: SecretStr | None = None
-    reddit_client_id: SecretStr | None = None
-    reddit_client_secret: SecretStr | None = None
     reddit_user_agent: str = "glean-ai/0.1 (contact: github.com/yunhozz/glean-ai)"
     threads_access_token: SecretStr | None = None
     github_enabled: bool = True
