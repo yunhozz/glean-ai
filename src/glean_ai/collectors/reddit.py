@@ -29,7 +29,8 @@ class RedditCollector(Collector):
         subreddits = interests.get("subreddits", ["artificial"])
         feed = "+".join(subreddits)
         document = await self.get_text(
-            f"https://www.reddit.com/r/{feed}/new/.rss",
+            f"https://www.reddit.com/r/{feed}/top/.rss",
+            params={"t": "day"},
             headers={"User-Agent": self.user_agent},
         )
         found = {item.external_id: item for item in self._parse(document)}

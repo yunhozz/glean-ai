@@ -59,7 +59,7 @@ glean-ai backfill 2026-08-01 2026-08-02  # 기간 수집 진입점
 glean-ai health
 ```
 
-`config/interests.yaml`에서 키워드와 subreddit을 수정합니다. Reddit은 공식 공개 RSS를 사용해 별도 자격증명이 필요하지 않습니다. Threads는 `threads_basic`, `threads_keyword_search` 권한을 승인받은 장기 User Access Token이 필요합니다. 실제 secret은 `.env` 또는 GitHub Secrets에만 둡니다. GitHub Actions에서는 저장소 기본 토큰과 코드에 정의한 고유 Reddit User-Agent를 사용합니다.
+`config/interests.yaml`에서 키워드와 subreddit을 수정합니다. Reddit은 공식 공개 RSS에서 최근 하루의 인기 게시물을 순서대로 수집하며 별도 자격증명이 필요하지 않습니다. Threads는 `threads_basic`, `threads_keyword_search` 권한을 승인받은 장기 User Access Token이 필요합니다. 실제 secret은 `.env` 또는 GitHub Secrets에만 둡니다. GitHub Actions에서는 저장소 기본 토큰과 코드에 정의한 고유 Reddit User-Agent를 사용합니다.
 
 ## 점수와 요약
 

@@ -52,7 +52,7 @@ async def test_four_collectors_normalize():
             "lastModified": "2026-08-31T00:00:00Z", "likes": 2, "downloads": 3,
         }]
     ))
-    respx.get("https://www.reddit.com/r/artificial/new/.rss").mock(
+    respx.get("https://www.reddit.com/r/artificial/top/.rss?t=day").mock(
         return_value=httpx.Response(200, text=REDDIT_FEED)
     )
     respx.get("https://graph.threads.net/v1.0/keyword_search").mock(
@@ -84,7 +84,7 @@ async def test_github_token_is_only_sent_to_github():
     huggingface = respx.get("https://huggingface.co/api/models").mock(
         return_value=httpx.Response(200, json=[])
     )
-    reddit = respx.get("https://www.reddit.com/r/artificial/new/.rss").mock(
+    reddit = respx.get("https://www.reddit.com/r/artificial/top/.rss?t=day").mock(
         return_value=httpx.Response(200, text='<feed xmlns="http://www.w3.org/2005/Atom"/>')
     )
     settings = Settings(database_url="sqlite://", github_token="github-secret")
@@ -147,9 +147,9 @@ async def test_github_preserves_results_when_one_query_fails():
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_reddit_uses_one_combined_official_rss_request():
+async def test_reddit_uses_one_combined_daily_top_rss_request():
     listing = respx.get(
-        "https://www.reddit.com/r/artificial+MachineLearning/new/.rss"
+        "https://www.reddit.com/r/artificial+MachineLearning/top/.rss?t=day"
     ).mock(
         return_value=httpx.Response(200, text=REDDIT_FEED)
     )
@@ -162,4 +162,5 @@ async def test_reddit_uses_one_combined_official_rss_request():
     assert result[0].body == "news"
     assert result[0].raw_metadata["subreddit"] == "artificial"
     assert listing.call_count == 1
+    assert listing.calls[0].request.url.params["t"] == "day"
     assert listing.calls[0].request.headers["User-Agent"] == "glean-ai/0.1 (by /u/operator)"

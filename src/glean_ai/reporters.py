@@ -78,7 +78,7 @@ def build_blocks(
         source = SOURCE_LABELS.get(content.source, content.source)
         text = (
             f"*{rank}. [{_area_label(content, summary)}] <{content.url}|{summary.title_ko}>*\n"
-            f"{summary.summary_ko}\n*왜 중요한가:* {summary.why_important}\n"
+            f"{summary.summary_ko}\n*실무 포인트:* {summary.why_important}\n"
             f"_{source} · {metrics}_"
         )
         blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": text[:2900]}})

@@ -19,7 +19,7 @@ async def test_public_sources_run_without_reddit_or_threads_credentials(tmp_path
         return_value=httpx.Response(200, json=[])
     )
     respx.get(
-        "https://www.reddit.com/r/artificial+MachineLearning+LocalLLaMA/new/.rss"
+        "https://www.reddit.com/r/artificial+MachineLearning+LocalLLaMA/top/.rss?t=day"
     ).mock(
         return_value=httpx.Response(
             200, text='<feed xmlns="http://www.w3.org/2005/Atom"/>'
