@@ -59,7 +59,7 @@ glean-ai backfill 2026-08-01 2026-08-02  # 기간 수집 진입점
 glean-ai health
 ```
 
-`config/interests.yaml`에서 키워드와 subreddit을 수정합니다. Reddit은 공식 공개 RSS에서 최근 하루의 인기 게시물을 순서대로 수집하며 별도 자격증명이 필요하지 않습니다. Threads는 `threads_basic`, `threads_keyword_search` 권한을 승인받은 장기 User Access Token이 필요합니다. 실제 secret은 `.env` 또는 GitHub Secrets에만 둡니다. GitHub Actions에서는 저장소 기본 토큰과 코드에 정의한 고유 Reddit User-Agent를 사용합니다.
+`config/interests.yaml`에서 키워드와 subreddit을 수정합니다. GitHub는 관심 키워드와 관련되고 stars가 10개 이상인 저장소를 최근 업데이트순으로 수집합니다. Reddit은 공식 공개 RSS에서 최근 하루의 인기 게시물을 순서대로 수집하며 별도 자격증명이 필요하지 않습니다. Threads는 `threads_basic`, `threads_keyword_search` 권한을 승인받은 장기 User Access Token이 필요합니다. 실제 secret은 `.env` 또는 GitHub Secrets에만 둡니다. GitHub Actions에서는 저장소 기본 토큰과 코드에 정의한 고유 Reddit User-Agent를 사용합니다.
 
 ## 점수와 요약
 
@@ -69,7 +69,7 @@ LLM은 외부 본문을 데이터로 명시하고 구조화 JSON을 검증해 `�
 
 ## Slack과 스케줄
 
-Webhook URL을 설정하고 `glean-ai report`를 실행합니다. 동일 로컬 날짜는 한 번만 전송하며 `--force`만 재전송을 허용합니다. `.github/workflows/daily.yml`의 `23:00 UTC`는 한국 시간 08:00입니다. Block Kit 각 section은 2,900자로 제한합니다.
+Webhook URL을 설정하고 `glean-ai report`를 실행합니다. 브리프는 상위 3개 소식을 상세히 보여주고 나머지는 제목과 핵심 지표만 간략히 표시합니다. GitHub는 stars와 forks를, Reddit은 최근 24시간 인기 순위를 지표로 사용합니다. 동일 로컬 날짜는 한 번만 전송하며 `--force`만 재전송을 허용합니다. `.github/workflows/daily.yml`의 `23:00 UTC`는 한국 시간 08:00입니다. Block Kit 각 section은 2,900자로 제한합니다.
 
 ## 테스트와 검증
 

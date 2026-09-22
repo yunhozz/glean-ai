@@ -16,12 +16,33 @@ METRIC_LABELS = {
     "likes": "좋아요", "comments": "댓글", "shares": "공유", "views": "조회",
     "stars": "스타", "forks": "포크", "downloads": "다운로드",
 }
+DETAIL_LIMIT = 3
+RANK_LABELS = ("①", "②", "③")
 
 
 def _area_label(content: Content, summary: TopicSummary) -> str:
     details = [category.split("/", 1)[1] for category in content.categories[:2]]
     areas = [area for area in summary.areas if area in {"기획", "개발", "디자인"}]
     return " · ".join(dict.fromkeys(areas + details)) or "AI"
+
+
+def _metric_text(content: Content) -> str:
+    source = SOURCE_LABELS.get(content.source, content.source)
+    if content.source == "github":
+        return (
+            f"{source} · ⭐ {content.metrics.stars:,} · "
+            f"Fork {content.metrics.forks:,}"
+        )
+    if content.source == "reddit":
+        rank = content.raw_metadata.get("daily_rank")
+        rank_text = f" #{rank}" if isinstance(rank, int) and rank > 0 else ""
+        return f"{source} · 🔥 최근 24시간 인기{rank_text}"
+    metrics = " · ".join(
+        f"{METRIC_LABELS.get(key, key)} {value:,}"
+        for key, value in content.metrics.model_dump().items()
+        if value
+    )
+    return f"{source} · {metrics or '공개 지표 없음'}"
 
 
 def build_blocks(
@@ -42,10 +63,64 @@ def build_blocks(
         f"{SOURCE_LABELS.get(source, source)} {count}" for source, count in source_counts.items()
     )
     blocks: list[dict[str, Any]] = [
-        {"type": "header", "text": {"type": "plain_text", "text": "오늘의 AI Product · Dev · Design Brief"}},
-        {"type": "context", "elements": [{"type": "mrkdwn", "text": f"집계: {start:%Y-%m-%d %H:%M} ~ {end:%Y-%m-%d %H:%M}"}]},
-        {"type": "context", "elements": [{"type": "mrkdwn", "text": f"구성: {composition or '분류 없음'}  |  출처: {sources or '없음'}"}]},
+        {
+            "type": "header",
+            "text": {"type": "plain_text", "text": "🤖 오늘의 AI 브리프"},
+        },
+        {
+            "type": "context",
+            "elements": [{
+                "type": "mrkdwn",
+                "text": f"{end:%Y-%m-%d} · 총 {len(rows)}개 소식",
+            }],
+        },
+        {
+            "type": "context",
+            "elements": [{
+                "type": "mrkdwn",
+                "text": (
+                    f"분야: {composition or '분류 없음'}  |  "
+                    f"출처: {sources or '없음'}"
+                ),
+            }],
+        },
     ]
+    detailed = rows[:DETAIL_LIMIT]
+    if detailed:
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "*🔥 오늘의 주목할 소식*"},
+        })
+    for index, (content, summary) in enumerate(detailed):
+        text = (
+            f"*{RANK_LABELS[index]} [{_area_label(content, summary)}] "
+            f"<{content.url}|{summary.title_ko}>*\n"
+            f"{summary.summary_ko}\n\n"
+            f"*💡 실무 포인트*\n{summary.why_important}"
+        )
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": text[:2900]}})
+        blocks.append({
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": _metric_text(content)}],
+        })
+        blocks.append({"type": "divider"})
+
+    compact = rows[DETAIL_LIMIT:]
+    if compact:
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "*📌 함께 볼 소식*"},
+        })
+        compact_text = "\n\n".join(
+            f"• *<{content.url}|{summary.title_ko}>*\n"
+            f"  _{_area_label(content, summary)} · {_metric_text(content)}_"
+            for content, summary in compact
+        )
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": compact_text[:2900]},
+        })
+
     if collection_results is not None:
         status_text = " · ".join(
             f"{SOURCE_LABELS.get(result.source, result.source)} "
@@ -70,19 +145,16 @@ def build_blocks(
                 "type": "context",
                 "elements": [{"type": "mrkdwn", "text": f"주의: {', '.join(warnings)}"}],
             })
-    for rank, (content, summary) in enumerate(rows, 1):
-        metrics = ", ".join(
-            f"{METRIC_LABELS.get(key, key)} {value:,}"
-            for key, value in content.metrics.model_dump().items() if value
-        ) or "공개 지표 없음"
-        source = SOURCE_LABELS.get(content.source, content.source)
-        text = (
-            f"*{rank}. [{_area_label(content, summary)}] <{content.url}|{summary.title_ko}>*\n"
-            f"{summary.summary_ko}\n*실무 포인트:* {summary.why_important}\n"
-            f"_{source} · {metrics}_"
-        )
-        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": text[:2900]}})
-    blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": f"생성: {end:%Y-%m-%d %H:%M %Z}"}]})
+    blocks.append({
+        "type": "context",
+        "elements": [{
+            "type": "mrkdwn",
+            "text": (
+                f"집계: {start:%Y-%m-%d %H:%M} ~ {end:%Y-%m-%d %H:%M} · "
+                f"생성: {end:%H:%M %Z}"
+            ),
+        }],
+    })
     return blocks
 
 

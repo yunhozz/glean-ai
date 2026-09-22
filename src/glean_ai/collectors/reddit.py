@@ -42,7 +42,7 @@ class RedditCollector(Collector):
         except ElementTree.ParseError as exc:
             raise CollectorError("invalid_response", "Invalid Reddit RSS response") from exc
         output = []
-        for entry in root.findall("atom:entry", ATOM):
+        for daily_rank, entry in enumerate(root.findall("atom:entry", ATOM), 1):
             external_id = entry.findtext("atom:id", default="", namespaces=ATOM)
             title = entry.findtext("atom:title", default="", namespaces=ATOM)
             published = entry.findtext("atom:published", namespaces=ATOM)
@@ -64,7 +64,8 @@ class RedditCollector(Collector):
                 url=HttpUrl(link.attrib["href"]),
                 published_at=datetime.fromisoformat(published.replace("Z", "+00:00")),
                 raw_metadata={
-                    "subreddit": subreddit_match.group(1) if subreddit_match else None
+                    "subreddit": subreddit_match.group(1) if subreddit_match else None,
+                    "daily_rank": daily_rank,
                 },
             ))
         return output

@@ -5,6 +5,8 @@ import httpx
 from ..models import Content, Metrics
 from .base import Collector, CollectorError
 
+MIN_STARS = 10
+
 
 def build_queries(keywords: list[str]) -> list[str]:
     terms = [f'"{word}"' if " " in word else word for word in keywords]
@@ -12,14 +14,16 @@ def build_queries(keywords: list[str]) -> list[str]:
     current: list[str] = []
     for term in terms:
         candidate = " OR ".join([*current, term])
-        if current and (len(current) >= 6 or len(candidate) > 256):
-            queries.append(" OR ".join(current))
+        if current and (
+            len(current) >= 6 or len(f"{candidate} stars:>={MIN_STARS}") > 256
+        ):
+            queries.append(f"{' OR '.join(current)} stars:>={MIN_STARS}")
             current = [term]
         else:
             current.append(term)
     if current:
-        queries.append(" OR ".join(current))
-    return queries or ['"artificial intelligence"']
+        queries.append(f"{' OR '.join(current)} stars:>={MIN_STARS}")
+    return queries or [f'"artificial intelligence" stars:>={MIN_STARS}']
 
 
 class GitHubCollector(Collector):
@@ -50,7 +54,11 @@ class GitHubCollector(Collector):
                 )
         if self.partial_errors and not items:
             raise self.partial_errors[0]
-        unique = list({str(item["id"]): item for item in items}.values())[:self.limit]
+        unique = [
+            item
+            for item in {str(item["id"]): item for item in items}.values()
+            if item.get("stargazers_count", 0) >= MIN_STARS
+        ][:self.limit]
         return [Content(
             source=self.source, external_id=str(item["id"]), content_type="repository",
             author=item["owner"]["login"], title=item["full_name"],

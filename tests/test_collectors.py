@@ -33,7 +33,7 @@ def github_item() -> dict[str, object]:
         "html_url": "https://github.com/a/b",
         "updated_at": "2026-08-31T00:00:00Z",
         "language": "Python",
-        "stargazers_count": 2,
+        "stargazers_count": 12,
         "forks_count": 1,
         "open_issues_count": 0,
         "topics": ["ai"],
@@ -107,6 +107,22 @@ def test_github_queries_respect_api_limits():
     assert len(queries) == 2
     assert all(query.count(" OR ") <= 5 for query in queries)
     assert all(len(query) <= 256 for query in queries)
+    assert all(query.endswith(" stars:>=10") for query in queries)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_github_excludes_repositories_below_minimum_stars():
+    low_interest = github_item()
+    low_interest["stargazers_count"] = 9
+    respx.get("https://api.github.com/search/repositories").mock(
+        return_value=httpx.Response(200, json={"items": [low_interest]})
+    )
+
+    async with httpx.AsyncClient() as client:
+        result = await GitHubCollector(client).collect({"keywords": ["AI"]})
+
+    assert result == []
 
 
 @pytest.mark.asyncio
@@ -161,6 +177,7 @@ async def test_reddit_uses_one_combined_daily_top_rss_request():
     assert [item.external_id for item in result] == ["t3_p"]
     assert result[0].body == "news"
     assert result[0].raw_metadata["subreddit"] == "artificial"
+    assert result[0].raw_metadata["daily_rank"] == 1
     assert listing.call_count == 1
     assert listing.calls[0].request.url.params["t"] == "day"
     assert listing.calls[0].request.headers["User-Agent"] == "glean-ai/0.1 (by /u/operator)"

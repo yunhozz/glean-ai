@@ -1,3 +1,4 @@
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -5,7 +6,7 @@ import pytest
 import respx
 
 from glean_ai.reporters import SlackReporter, build_blocks
-from glean_ai.models import CollectionResult, CollectionStatus
+from glean_ai.models import CollectionResult, CollectionStatus, Metrics, TopicSummary
 from glean_ai.storage import Store
 from glean_ai.summarizer import Summarizer
 
@@ -24,11 +25,69 @@ async def test_llm_fallback_and_blocks(sample):
     async with httpx.AsyncClient() as client:
         summary = await Summarizer(client, None, "https://example.com", "model").summarize(sample)
     blocks = build_blocks([(sample, summary)], datetime.now(timezone.utc) - timedelta(days=1), datetime.now(timezone.utc))
-    assert blocks[0]["text"]["text"] == "오늘의 AI Product · Dev · Design Brief"
+    assert blocks[0]["text"]["text"] == "🤖 오늘의 AI 브리프"
     assert any(sample.title in str(block) for block in blocks)
     assert any("실무 포인트" in str(block) for block in blocks)
     assert all("왜 중요한가" not in str(block) for block in blocks)
     assert "Open source workflow automation" not in str(blocks)
+
+
+def test_blocks_show_three_detailed_items_and_compact_remainder(sample):
+    rows = []
+    for index in range(5):
+        content = deepcopy(sample)
+        content.external_id = str(index)
+        content.title = f"Original title {index}"
+        summary = TopicSummary(
+            title_ko=f"소식 {index}",
+            summary_ko=f"상세 요약 {index}",
+            areas=["개발"],
+            why_important=f"실무 내용 {index}",
+        )
+        rows.append((content, summary))
+
+    now = datetime.now(timezone.utc)
+    blocks = build_blocks(rows, now - timedelta(days=1), now)
+    text = str(blocks)
+
+    assert "🔥 오늘의 주목할 소식" in text
+    assert "📌 함께 볼 소식" in text
+    assert all(f"상세 요약 {index}" in text for index in range(3))
+    assert all(f"상세 요약 {index}" not in text for index in range(3, 5))
+    assert all(f"소식 {index}" in text for index in range(5))
+    assert sum(block["type"] == "divider" for block in blocks) == 3
+    assert len(blocks) <= 50
+    assert all(
+        len(block["text"]["text"]) <= 2900
+        for block in blocks
+        if block["type"] == "section"
+    )
+
+
+def test_blocks_show_github_metrics_and_reddit_daily_rank(sample):
+    github = deepcopy(sample)
+    github.metrics = Metrics(stars=0, forks=0)
+    reddit = deepcopy(sample)
+    reddit.source = "reddit"
+    reddit.external_id = "reddit-1"
+    reddit.metrics = Metrics()
+    reddit.raw_metadata = {"daily_rank": 2}
+    summary = TopicSummary(
+        title_ko="AI 소식",
+        summary_ko="요약",
+        areas=["개발"],
+        why_important="실무 내용",
+    )
+
+    now = datetime.now(timezone.utc)
+    blocks = build_blocks(
+        [(github, summary), (reddit, summary)], now - timedelta(days=1), now
+    )
+    text = str(blocks)
+
+    assert "GitHub · ⭐ 0 · Fork 0" in text
+    assert "Reddit · 🔥 최근 24시간 인기 #2" in text
+    assert "공개 지표 없음" not in text
 
 
 def test_blocks_show_partial_collection_status():
