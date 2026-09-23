@@ -49,6 +49,7 @@ async def test_four_collectors_normalize():
     respx.get("https://huggingface.co/api/models").mock(return_value=httpx.Response(
         200, json=[{
             "id": "a/m", "author": "a", "tags": ["text-generation"],
+            "pipeline_tag": "text-generation", "trendingScore": 1,
             "lastModified": "2026-08-31T00:00:00Z", "likes": 2, "downloads": 3,
         }]
     ))

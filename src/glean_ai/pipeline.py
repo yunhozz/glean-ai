@@ -70,6 +70,13 @@ def score(items: list[Content], now: datetime | None = None) -> list[Content]:
     for item in items:
         metrics = item.metrics
         engagement = metrics.likes + metrics.comments * 2 + metrics.shares * 3 + metrics.stars * 2 + metrics.forks * 3 + math.log1p(metrics.views + metrics.downloads)
+        trending_score = item.raw_metadata.get("trending_score")
+        if (
+            item.source == "huggingface"
+            and isinstance(trending_score, (int, float))
+            and not isinstance(trending_score, bool)
+        ):
+            engagement = max(0, trending_score)
         raw[id(item)] = engagement
         by_source.setdefault(item.source, []).append(engagement)
     for item in items:
