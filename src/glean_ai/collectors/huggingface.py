@@ -100,9 +100,10 @@ class HuggingFaceCollector(Collector):
             downloads = item.get("downloads") or 0
             trending_score = item.get("trendingScore")
             if not (
-                (isinstance(trending_score, (int, float)) and trending_score > 0)
-                or likes >= MIN_LIKES
-                or downloads >= MIN_DOWNLOADS
+                isinstance(trending_score, (int, float))
+                and not isinstance(trending_score, bool)
+                and trending_score > 0
+                and (likes >= MIN_LIKES or downloads >= MIN_DOWNLOADS)
             ):
                 continue
 

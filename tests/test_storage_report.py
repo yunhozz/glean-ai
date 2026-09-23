@@ -20,6 +20,51 @@ def test_storage_idempotency(tmp_path, sample):
     assert rows[0].title == sample.title
 
 
+def test_huggingface_fallback_describes_trend_without_claiming_update(sample):
+    model = deepcopy(sample)
+    model.source = "huggingface"
+    summary = Summarizer.fallback(model)
+
+    assert "주목받는 모델" in summary.title_ko
+    assert "현재 트렌드" in summary.summary_ko
+    assert "최신 변경" not in summary.summary_ko
+
+
+def test_huggingface_recollection_updates_metrics_and_report_recency(tmp_path, sample):
+    store = Store(f"sqlite:///{tmp_path}/trends.db")
+    store.create_all()
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(days=1)
+    model = deepcopy(sample)
+    model.source = "huggingface"
+    model.published_at = now - timedelta(days=8)
+    model.collected_at = now - timedelta(days=2)
+    model.raw_metadata = {"trending_score": 1}
+    model.metrics = Metrics(likes=50)
+    assert store.upsert(model) is True
+    assert store.recent(since) == []
+
+    updated = deepcopy(model)
+    updated.collected_at = now
+    updated.metrics.likes = 100
+    updated.raw_metadata = {"trending_score": 10}
+    updated.final_score = 80
+    assert store.upsert(updated) is False
+
+    rows = store.recent(since)
+    assert len(rows) == 1
+    assert rows[0].metrics["likes"] == 100
+    assert rows[0].raw_metadata["trending_score"] == 10
+    assert rows[0].final_score == 80
+
+    old_github = deepcopy(sample)
+    old_github.published_at = now - timedelta(days=8)
+    old_github.collected_at = now
+    old_github.external_id = "old-github"
+    assert store.upsert(old_github) is True
+    assert [row.external_id for row in store.recent(since)] == [model.external_id]
+
+
 @pytest.mark.asyncio
 async def test_llm_fallback_and_blocks(sample):
     async with httpx.AsyncClient() as client:

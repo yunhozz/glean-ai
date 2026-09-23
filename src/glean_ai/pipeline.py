@@ -85,7 +85,8 @@ def score(items: list[Content], now: datetime | None = None) -> list[Content]:
         relevance = min(100, len(item.matched_keywords) * 30 + (30 if item.categories else 0))
         trend = raw[id(item)] / maximum * 100
         quality = min(100, 35 + (20 if item.author else 0) + min(len(item.body), 450) / 10)
-        age_hours = max(0, (now - item.published_at).total_seconds() / 3600)
+        observed_at = item.collected_at if item.source == "huggingface" else item.published_at
+        age_hours = max(0, (now - observed_at).total_seconds() / 3600)
         freshness = max(0, 100 * (1 - age_hours / 168))
         item.relevance_score, item.trend_score = relevance, trend
         item.quality_score, item.freshness_score = quality, freshness

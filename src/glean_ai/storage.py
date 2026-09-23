@@ -3,7 +3,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, Float, String, Text, UniqueConstraint, create_engine, select
+from sqlalchemy import JSON, DateTime, Float, String, Text, UniqueConstraint, and_, create_engine, or_, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 from .models import Content
@@ -80,16 +80,22 @@ class Store:
                 ContentRow.source == content.source,
                 ContentRow.external_id == content.external_id,
             ))
-            if existing:
-                return False
             data = content.model_dump()
             data["url"] = str(content.url)
             data["metrics"] = content.metrics.model_dump()
+            if existing:
+                if content.source == "huggingface":
+                    for name, value in data.items():
+                        setattr(existing, name, value)
+                return False
             session.add(ContentRow(**data))
             return True
 
     def recent(self, since: datetime) -> list[ContentRow]:
         with self.session() as session:
             return list(session.scalars(select(ContentRow).where(
-                ContentRow.published_at >= since
+                or_(
+                    and_(ContentRow.source == "huggingface", ContentRow.collected_at >= since),
+                    and_(ContentRow.source != "huggingface", ContentRow.published_at >= since),
+                )
             ).order_by(ContentRow.final_score.desc())).all())

@@ -25,6 +25,15 @@ def test_freshness_changes_score(sample):
     assert score([sample])[0].freshness_score > score([old])[0].freshness_score
 
 
+def test_huggingface_freshness_uses_collection_time(sample):
+    current = deepcopy(sample)
+    current.source = "huggingface"
+    current.published_at = datetime.now(timezone.utc) - timedelta(days=8)
+    current.collected_at = datetime.now(timezone.utc)
+
+    assert score([current])[0].freshness_score > 99
+
+
 def test_report_selection_balances_sources_and_areas(sample):
     items = []
     for index in range(8):

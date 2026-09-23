@@ -50,7 +50,7 @@ async def test_four_collectors_normalize():
         200, json=[{
             "id": "a/m", "author": "a", "tags": ["text-generation"],
             "pipeline_tag": "text-generation", "trendingScore": 1,
-            "lastModified": "2026-08-31T00:00:00Z", "likes": 2, "downloads": 3,
+            "lastModified": "2026-08-31T00:00:00Z", "likes": 50, "downloads": 3,
         }]
     ))
     respx.get("https://www.reddit.com/r/artificial/top/.rss?t=day").mock(
@@ -73,6 +73,33 @@ async def test_four_collectors_normalize():
         )
     assert [result[0].source for result in results] == [
         "github", "huggingface", "reddit", "threads",
+    ]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_huggingface_requires_trend_and_popularity():
+    def model(name: str, trending: int, likes: int, downloads: int) -> dict[str, object]:
+        return {
+            "id": f"example/{name}", "author": "example", "tags": ["text-generation"],
+            "pipeline_tag": "text-generation", "trendingScore": trending,
+            "lastModified": "2026-08-31T00:00:00Z", "likes": likes,
+            "downloads": downloads,
+        }
+
+    respx.get("https://huggingface.co/api/models").mock(return_value=httpx.Response(
+        200, json=[
+            model("weak", 10, 2, 3),
+            model("likes", 1, 50, 3),
+            model("downloads", 1, 2, 5_000),
+            model("not-trending", 0, 100, 10_000),
+        ]
+    ))
+    async with httpx.AsyncClient() as client:
+        result = await HuggingFaceCollector(client).collect({"keywords": []})
+
+    assert [item.external_id for item in result] == [
+        "example/likes", "example/downloads",
     ]
 
 
