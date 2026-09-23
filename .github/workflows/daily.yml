@@ -1,7 +1,8 @@
 name: daily-glean-ai
 on:
   schedule:
-    - cron: "0 23 * * *"
+    - cron: "0 8 * * *"
+      timezone: "Asia/Seoul"
   workflow_dispatch:
 jobs:
   report:
