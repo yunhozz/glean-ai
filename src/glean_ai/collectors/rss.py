@@ -58,6 +58,7 @@ class RSSCollector(Collector):
         self.partial_errors = []
         document = await self.get_text(
             self.url,
+            retry_rate_limited=self.source != "venturebeat_ai",
             follow_redirects=True,
             headers={
                 "Accept": "application/atom+xml, application/rss+xml, application/xml, text/xml",

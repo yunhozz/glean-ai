@@ -10,14 +10,17 @@ from ..models import Content
 
 
 class CollectorError(RuntimeError):
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str, message: str, *, retryable: bool = True) -> None:
         super().__init__(message)
         self.code = code
+        self.retryable = retryable
 
 
 def _is_retryable(error: BaseException) -> bool:
     return isinstance(error, (httpx.TimeoutException, httpx.TransportError)) or (
-        isinstance(error, CollectorError) and error.code == "rate_limited"
+        isinstance(error, CollectorError)
+        and error.code == "rate_limited"
+        and error.retryable
     )
 
 
@@ -48,9 +51,11 @@ class Collector(ABC):
         stop=stop_after_attempt(3),
         reraise=True,
     )
-    async def get_text(self, url: str, **kwargs: Any) -> str:
+    async def get_text(
+        self, url: str, *, retry_rate_limited: bool = True, **kwargs: Any
+    ) -> str:
         response = await self.client.get(url, **kwargs)
-        await self._prepare_response(response)
+        await self._prepare_response(response, retry_rate_limited=retry_rate_limited)
         return response.text
 
     @retry(
@@ -70,8 +75,10 @@ class Collector(ABC):
         except ValueError as exc:
             raise CollectorError("invalid_response", "Invalid JSON response") from exc
 
-    async def _prepare_response(self, response: httpx.Response) -> None:
-        if response.status_code == 429:
+    async def _prepare_response(
+        self, response: httpx.Response, *, retry_rate_limited: bool = True
+    ) -> None:
+        if response.status_code == 429 and retry_rate_limited:
             retry_after = response.headers.get("Retry-After")
             if retry_after:
                 try:
@@ -81,10 +88,12 @@ class Collector(ABC):
                         response.headers["Date"]
                     )).total_seconds())
                 await _sleep(seconds)
-        self.check_response(response)
+        self.check_response(response, retry_rate_limited=retry_rate_limited)
 
     @staticmethod
-    def check_response(response: httpx.Response) -> None:
+    def check_response(
+        response: httpx.Response, *, retry_rate_limited: bool = True
+    ) -> None:
         if response.status_code < 400:
             return
         code = {
@@ -94,7 +103,11 @@ class Collector(ABC):
             422: "invalid_query",
             429: "rate_limited",
         }.get(response.status_code, "http_error")
-        raise CollectorError(code, f"HTTP {response.status_code}")
+        raise CollectorError(
+            code,
+            f"HTTP {response.status_code}",
+            retryable=retry_rate_limited if code == "rate_limited" else True,
+        )
 
 
 _sleep: Callable[[float], Awaitable[None]]

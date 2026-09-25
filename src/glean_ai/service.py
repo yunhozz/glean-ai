@@ -124,8 +124,15 @@ class DailyService:
             log.info("source_collected", source=name, status=status, inserted=inserted)
             return name, result
         except Exception as exc:
-            error_code = exc.code if isinstance(exc, CollectorError) else "unexpected"
-            safe_error = str(exc)[:200] if isinstance(exc, CollectorError) else type(exc).__name__
+            if isinstance(exc, CollectorError):
+                error_code = exc.code
+                safe_error = str(exc)[:200]
+            elif name == "toss_tech" and isinstance(exc, httpx.TransportError):
+                error_code = "transport"
+                safe_error = type(exc).__name__
+            else:
+                error_code = "unexpected"
+                safe_error = type(exc).__name__
             status = (
                 CollectionStatus.NOT_CONFIGURED
                 if error_code == "not_configured" else CollectionStatus.FAILED
