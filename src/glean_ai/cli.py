@@ -9,7 +9,7 @@ import typer
 
 from .config import get_settings
 from .models import CollectionResult, Content, TopicSummary
-from .pipeline import canonical_url
+from .pipeline import canonical_url, select_report_items
 from .reporters import SlackReporter, build_messages
 from .service import DailyService, configure_logging
 from .storage import Store
@@ -87,6 +87,19 @@ async def _make_report(
                 and canonical_url(str(item.url)) not in known_urls
             )
         items = sorted(recent_items, key=lambda item: item.final_score, reverse=True)
+        source_groups = {source: group for source, _, group in platforms}
+        selected_items: list[Content] = []
+        for group_name in ("AI 뉴스", "AI 기술"):
+            group_sources = [
+                source for source, _, group in platforms if group == group_name
+            ]
+            selected_items.extend(select_report_items(
+                [item for item in items if source_groups[item.source] == group_name],
+                limit=20,
+                preferred_sources=group_sources,
+                max_per_source=2,
+            ))
+        items = sorted(selected_items, key=lambda item: item.final_score, reverse=True)
         summarizer = Summarizer(client, settings.llm_api_key.get_secret_value() if settings.llm_api_key else None, settings.llm_base_url, settings.llm_model)
         semaphore = asyncio.Semaphore(10)
 

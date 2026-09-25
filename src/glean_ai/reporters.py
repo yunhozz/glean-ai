@@ -184,24 +184,6 @@ def _allocate_item_budgets(capacities: list[int], available: int) -> list[int]:
     return budgets
 
 
-def _split_item_budget(summary: str, why: str, budget: int) -> tuple[str, str]:
-    full_length = len(summary) + len(why)
-    if full_length <= budget:
-        return summary, why
-    if not full_length or budget <= 0:
-        return "", ""
-    summary_budget = min(len(summary), budget * len(summary) // full_length)
-    why_budget = min(len(why), budget - summary_budget)
-    remaining = budget - summary_budget - why_budget
-    if remaining:
-        extra = min(len(summary) - summary_budget, remaining)
-        summary_budget += extra
-        remaining -= extra
-    if remaining:
-        why_budget += min(len(why) - why_budget, remaining)
-    return _truncate_text(summary, summary_budget), _truncate_text(why, why_budget)
-
-
 def _entry_blocks(entries: list[str]) -> list[dict[str, Any]]:
     blocks: list[dict[str, Any]] = []
     current = ""
@@ -238,7 +220,7 @@ def _group_message(
     )
     shell = prefix + suffix
 
-    source_items: list[tuple[str, list[tuple[str, str, str, str]]]] = []
+    source_items: list[tuple[str, list[tuple[str, str, str]]]] = []
     for source, source_name in sources:
         items = []
         for index, (content, topic_summary) in enumerate(
@@ -254,9 +236,7 @@ def _group_message(
                 f"<{content.url}|원문 보기>"
             )
             metric = f"_{_metric_text(content)}_"
-            items.append((
-                title, topic_summary.summary_ko, topic_summary.why_important, metric
-            ))
+            items.append((title, topic_summary.summary_ko, metric))
         source_items.append((source_name, items))
 
     item_data = [item for _, items in source_items for item in items]
@@ -267,8 +247,8 @@ def _group_message(
     ]
     separators = max(0, len(item_data) + len(source_headings) - 1) * 2
     fixed_lengths = [
-        len(title) + len("*💡 실무 포인트*") + len(metric) + 5
-        for title, _, _, metric in item_data
+        len(title) + len(metric) + (2 if summary else 1)
+        for title, summary, metric in item_data
     ]
     available_body = (
         max(0, MAX_BLOCKS_PER_MESSAGE - len(shell)) * SECTION_TEXT_LIMIT
@@ -278,10 +258,10 @@ def _group_message(
     )
     capacities = [
         max(0, min(
-            len(summary) + len(why),
+            len(summary),
             SECTION_TEXT_LIMIT - fixed_length,
         ))
-        for (_, summary, why, _), fixed_length in zip(item_data, fixed_lengths, strict=True)
+        for (_, summary, _), fixed_length in zip(item_data, fixed_lengths, strict=True)
     ]
     budgets = _allocate_item_budgets(capacities, available_body)
 
@@ -290,14 +270,12 @@ def _group_message(
         budget_index = 0
         for heading, (_, items) in zip(source_headings, source_items, strict=True):
             entries.append(heading)
-            for title, summary_text, why_text, metric in items:
-                short_summary, short_why = _split_item_budget(
-                    summary_text, why_text, budgets[budget_index]
+            for title, summary_text, metric in items:
+                short_summary = _truncate_text(summary_text, budgets[budget_index])
+                item_text = f"{title}\n{short_summary}\n{metric}" if short_summary else (
+                    f"{title}\n{metric}"
                 )
-                entries.append(
-                    f"{title}\n{short_summary}\n\n"
-                    f"*💡 실무 포인트*\n{short_why}\n{metric}"
-                )
+                entries.append(item_text)
                 budget_index += 1
         blocks = prefix + _entry_blocks(entries) + suffix
         if len(blocks) <= MAX_BLOCKS_PER_MESSAGE:

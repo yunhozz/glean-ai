@@ -106,14 +106,21 @@ def process(
 
 
 def select_report_items(
-    items: list[Content], limit: int, preferred_sources: list[str] | None = None
+    items: list[Content],
+    limit: int,
+    preferred_sources: list[str] | None = None,
+    max_per_source: int | None = None,
 ) -> list[Content]:
     """Select a high-quality brief without letting one feed occupy the report."""
     if limit <= 0:
         return []
 
     ranked = sorted(items, key=lambda item: item.final_score, reverse=True)
-    source_limit = max(1, math.ceil(limit * 0.4))
+    source_limit = (
+        max_per_source
+        if max_per_source is not None
+        else max(1, math.ceil(limit * 0.4))
+    )
     source_counts: Counter[str] = Counter()
     selected: list[Content] = []
     selected_ids: set[int] = set()

@@ -50,7 +50,7 @@ class TopicSummary(BaseModel):
     title_ko: str
     summary_ko: str
     areas: list[str]
-    why_important: str
+    why_important: str = ""
     uncertainty: str | None = None
 
 

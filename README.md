@@ -5,7 +5,7 @@ AI 뉴스와 국내 기술 블로그의 기술 글을 수집·정규화·분석�
 ## 가정과 현재 범위
 
 - 실행: Docker Compose, 배포: GitHub Actions cron, DB: PostgreSQL.
-- 보고: 매일 08:00 Asia/Seoul, 한국어, Incoming Webhook. AI 뉴스와 AI 기술로 나눠 모든 수집 항목을 전송합니다.
+- 보고: 매일 08:00 Asia/Seoul, 한국어, Incoming Webhook. AI 뉴스와 AI 기술 메시지마다 최대 20개 항목을 보내며, 같은 소스에서는 최대 2개를 선택합니다.
 - 후보 수집 상한: source당 100개. 기본 관심 목록과 RSS/Atom 피드는 `config/interests.yaml`에서 관리합니다.
 - GitHub, Hugging Face, Reddit은 기존 조건에 맞는 후보를 모두 저장합니다. Daily AI Thread의 14개 뉴스 피드와 카카오 테크, 네이버 D2, 토스 테크, 우아한형제들 기술블로그를 RSS/Atom으로 수집합니다.
 - 초기 중복 처리는 canonical URL과 `SequenceMatcher` 문자열 유사도(0.88)를 사용합니다. 운영이 단순하지만 의미가 같은 다른 표현을 놓칠 수 있습니다.
@@ -64,13 +64,13 @@ GitHub Actions의 기본 브랜치에 반영한 뒤 `Actions > daily-glean-ai > 
 
 ## 점수와 요약
 
-`final = relevance×0.35 + trend×0.30 + quality×0.20 + freshness×0.15`; 전부 0~100입니다. 참여량은 source 내부 최대값으로 정규화하며 각 요소를 `score_reasons` JSON에 보존합니다. 보고 기간 내 모든 항목을 점수순으로 정렬해 AI 뉴스와 AI 기술 메시지에 나눠 담고, 각 메시지 안에서 소스별 구획을 표시합니다.
+`final = relevance×0.35 + trend×0.30 + quality×0.20 + freshness×0.15`; 전부 0~100입니다. 참여량은 source 내부 최대값으로 정규화하며 각 요소를 `score_reasons` JSON에 보존합니다. 보고 기간의 항목을 점수순으로 선별해 AI 뉴스와 AI 기술 메시지마다 최대 20개, 소스별 최대 2개를 담고 메시지 안에서 소스별 구획을 표시합니다.
 
-LLM은 외부 본문을 데이터로 명시하고 구조화 JSON을 검증해 `무슨 소식인지`와 `왜 중요한지`를 한국어로 편집합니다. 2회 실패 또는 키 미설정 시에도 원문 태그를 복사하지 않고 한국어 안내 문구로 계속합니다. 규칙 기반 fallback은 번역·해석이 아니라는 한계가 있습니다.
+LLM은 외부 본문을 데이터로 명시하고 구조화 JSON을 검증해 `무슨 소식인지`를 한국어로 편집합니다. 2회 실패 또는 키 미설정 시 소스별 fallback을 사용하며, 일반 RSS 항목은 제목만 표시합니다. 규칙 기반 fallback은 번역·해석이 아니라는 한계가 있습니다.
 
 ## Slack과 스케줄
 
-Webhook URL을 설정하고 `glean-ai report`를 실행합니다. Slack 메시지는 `AI 뉴스`와 `AI 기술` 두 개이며, 두 메시지에 `interests.yaml`의 18개 피드 ID와 GitHub·Hugging Face·Reddit을 합친 21개 소스 구획을 표시합니다. 각 구획에는 보고 기간에 수집한 모든 항목을 제목·링크·요약·실무 포인트 형식으로 담습니다. Block Kit 한도에 맞게 요약과 실무 포인트를 압축할 수 있으며 제목과 링크는 유지합니다. 제목·링크만으로도 50개 블록을 넘으면 보고를 실패 처리해 항목을 누락하지 않습니다. `daily`에서는 수집 결과가 없거나 실패한 플랫폼에도 수집 상태를 표시합니다. GitHub는 stars와 forks를, Reddit은 최근 24시간 인기 순위를 지표로 사용합니다. 동일 로컬 날짜는 한 번만 전송하며 `--force`만 재전송을 허용합니다. 전송이 중간에 실패하면 이미 성공한 메시지 그룹을 기록해 재실행 시 건너뜁니다. `.github/workflows/daily.yml`의 `23:00 UTC`는 한국 시간 08:00입니다. Section block 텍스트는 2,900자 이하로 나누고 메시지마다 최대 50개 블록을 사용합니다.
+Webhook URL을 설정하고 `glean-ai report`를 실행합니다. Slack 메시지는 `AI 뉴스`와 `AI 기술` 두 개이며, 두 메시지에 `interests.yaml`의 18개 피드 ID와 GitHub·Hugging Face·Reddit을 합친 21개 소스 구획을 표시합니다. 각 메시지는 점수순으로 최대 20개 항목을 담고, 같은 소스의 항목은 최대 2개로 제한합니다. 각 항목은 제목·링크·요약으로 표시합니다. 메시지마다 최대 50개 Block Kit 블록을 사용하며, 제목과 링크만으로 한도를 넘으면 보고를 실패 처리합니다. `daily`에서는 수집 결과가 없거나 실패한 플랫폼에도 수집 상태를 표시합니다. GitHub는 stars와 forks를, Reddit은 최근 24시간 인기 순위를 지표로 사용합니다. 동일 로컬 날짜는 한 번만 전송하며 `--force`만 재전송을 허용합니다. 전송이 중간에 실패하면 이미 성공한 메시지 그룹을 기록해 재실행 시 건너뜁니다. `.github/workflows/daily.yml`의 `23:00 UTC`는 한국 시간 08:00입니다. Section block 텍스트는 2,900자 이하로 나눕니다.
 
 ## 테스트와 검증
 
