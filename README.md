@@ -64,13 +64,13 @@ GitHub Actions의 기본 브랜치에 반영한 뒤 `Actions > daily-glean-ai > 
 
 ## 점수와 요약
 
-`final = relevance×0.35 + trend×0.30 + quality×0.20 + freshness×0.15`; 전부 0~100입니다. 참여량은 source 내부 최대값으로 정규화하며 각 요소를 `score_reasons` JSON에 보존합니다. 보고 기간 내 모든 항목을 점수순으로 정렬해 AI 뉴스와 AI 기술 메시지에 나눠 담습니다.
+`final = relevance×0.35 + trend×0.30 + quality×0.20 + freshness×0.15`; 전부 0~100입니다. 참여량은 source 내부 최대값으로 정규화하며 각 요소를 `score_reasons` JSON에 보존합니다. 보고 기간 내 모든 항목을 점수순으로 정렬해 수집 플랫폼별 AI 뉴스 또는 AI 기술 메시지에 담습니다.
 
 LLM은 외부 본문을 데이터로 명시하고 구조화 JSON을 검증해 `무슨 소식인지`와 `왜 중요한지`를 한국어로 편집합니다. 2회 실패 또는 키 미설정 시에도 원문 태그를 복사하지 않고 한국어 안내 문구로 계속합니다. 규칙 기반 fallback은 번역·해석이 아니라는 한계가 있습니다.
 
 ## Slack과 스케줄
 
-Webhook URL을 설정하고 `glean-ai report`를 실행합니다. AI 뉴스 메시지에는 뉴스 피드, AI 기술 메시지에는 기술 블로그와 GitHub·Hugging Face·Reddit의 결과를 담고 모든 소식을 제목·요약·실무 포인트 형식으로 표시합니다. Slack 한도를 넘으면 해당 묶음만 여러 메시지로 나눠 전송합니다. GitHub는 stars와 forks를, Reddit은 최근 24시간 인기 순위를 지표로 사용합니다. 동일 로컬 날짜는 한 번만 전송하며 `--force`만 재전송을 허용합니다. `.github/workflows/daily.yml`의 `23:00 UTC`는 한국 시간 08:00입니다. Block Kit section 텍스트는 2,900자 이하로 나눕니다.
+Webhook URL을 설정하고 `glean-ai report`를 실행합니다. 수집 플랫폼마다 Slack 메시지 하나를 보내며, 각 메시지에 해당 플랫폼의 모든 소식을 제목·링크·요약·실무 포인트 형식으로 표시합니다. 한도에 맞게 요약과 실무 포인트를 압축하고 제목과 링크는 유지합니다. 수집 결과가 없거나 실패한 플랫폼에도 상태를 표시합니다. GitHub는 stars와 forks를, Reddit은 최근 24시간 인기 순위를 지표로 사용합니다. 동일 로컬 날짜는 한 번만 전송하며 `--force`만 재전송을 허용합니다. `.github/workflows/daily.yml`의 `23:00 UTC`는 한국 시간 08:00입니다. Block Kit section 텍스트는 2,900자 이하로 나눕니다.
 
 ## 테스트와 검증
 

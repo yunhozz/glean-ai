@@ -4,10 +4,11 @@ from datetime import datetime, timedelta, timezone
 import httpx
 import pytest
 import respx
+from pydantic import HttpUrl
 
 from glean_ai.reporters import SlackReporter, build_blocks
 from glean_ai.models import CollectionResult, CollectionStatus, Metrics, TopicSummary
-from glean_ai.storage import ReportRow, Store
+from glean_ai.storage import ContentRow, ReportRow, Store
 from glean_ai.summarizer import Summarizer
 
 
@@ -18,6 +19,38 @@ def test_storage_idempotency(tmp_path, sample):
     assert store.upsert(sample) is False
     rows = store.recent(datetime.now(timezone.utc) - timedelta(days=1))
     assert rows[0].title == sample.title
+
+
+def test_storage_batch_upsert_is_idempotent(tmp_path, sample):
+    store = Store(f"sqlite:///{tmp_path}/batch.db")
+    store.create_all()
+    second = deepcopy(sample)
+    second.external_id = "2"
+    second.url = HttpUrl("https://github.com/acme/another")
+
+    assert store.upsert_many([sample, second]) == 2
+    assert store.upsert_many([sample, second]) == 0
+    with store.session() as session:
+        assert session.query(ContentRow).count() == 2
+
+
+def test_newly_discovered_tech_blog_post_appears_once(tmp_path, sample):
+    store = Store(f"sqlite:///{tmp_path}/tech.db")
+    store.create_all()
+    now = datetime.now(timezone.utc)
+    old_post = deepcopy(sample)
+    old_post.source = "kakao_tech"
+    old_post.published_at = now - timedelta(days=7)
+    old_post.collected_at = now
+    assert store.upsert(old_post) is True
+
+    since = now - timedelta(days=1)
+    assert store.recent(since) == []
+    assert [row.external_id for row in store.recent(since, {"kakao_tech"})] == [
+        old_post.external_id
+    ]
+    assert store.upsert(old_post) is False
+    assert store.recent(now + timedelta(days=1), {"kakao_tech"}) == []
 
 
 def test_huggingface_fallback_describes_trend_without_claiming_update(sample):

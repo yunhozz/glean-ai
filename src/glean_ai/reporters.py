@@ -91,37 +91,6 @@ def _text_length(value: Any) -> int:
     return 0
 
 
-def _item_blocks(
-    index: int, content: Content, summary: TopicSummary
-) -> list[dict[str, Any]]:
-    blocks: list[dict[str, Any]] = [{
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": (
-                f"*{index}. [{_area_label(content, summary)}] "
-                f"<{content.url}|{summary.title_ko}>*"
-            ),
-        },
-    }]
-    blocks.extend(
-        {"type": "section", "text": {"type": "mrkdwn", "text": part}}
-        for part in _split_text(summary.summary_ko)
-    )
-    for part_index, part in enumerate(_split_text(summary.why_important, 2_850)):
-        prefix = "*💡 실무 포인트*\n" if part_index == 0 else ""
-        blocks.append({
-            "type": "section",
-            "text": {"type": "mrkdwn", "text": f"{prefix}{part}"},
-        })
-    blocks.append({
-        "type": "context",
-        "elements": [{"type": "mrkdwn", "text": _metric_text(content)}],
-    })
-    blocks.append({"type": "divider"})
-    return blocks
-
-
 def _collection_blocks(
     collection_results: list[CollectionResult] | None,
 ) -> list[dict[str, Any]]:
@@ -157,50 +126,27 @@ def _collection_blocks(
     return blocks
 
 
-def _report_shell(
+def _platform_shell(
     rows: list[tuple[Content, TopicSummary]],
     start: datetime,
     end: datetime,
     collection_results: list[CollectionResult] | None,
+    source_name: str,
     group_name: str,
-    page: int,
-    page_count: int,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    area_counts = {area: 0 for area in ("기획", "개발", "디자인")}
-    source_counts: dict[str, int] = {}
-    for content, summary in rows:
-        for area in set(summary.areas):
-            if area in area_counts:
-                area_counts[area] += 1
-        source_counts[content.source] = source_counts.get(content.source, 0) + 1
-    composition = " · ".join(
-        f"{area} {count}" for area, count in area_counts.items() if count
-    )
-    sources = " · ".join(
-        f"{SOURCE_LABELS.get(source, source)} {count}"
-        for source, count in source_counts.items()
-    )
-    page_label = f" · {page}/{page_count}" if page_count > 1 else ""
     prefix: list[dict[str, Any]] = [
         {
             "type": "header",
-            "text": {"type": "plain_text", "text": f"🤖 {group_name} 브리프{page_label}"},
+            "text": {
+                "type": "plain_text",
+                "text": f"🤖 {source_name} · {group_name}",
+            },
         },
         {
             "type": "context",
             "elements": [{
                 "type": "mrkdwn",
-                "text": f"{end:%Y-%m-%d} · 총 {len(rows)}개 소식",
-            }],
-        },
-        {
-            "type": "context",
-            "elements": [{
-                "type": "mrkdwn",
-                "text": (
-                    f"분야: {composition or '분류 없음'}  |  "
-                    f"출처: {sources or '없음'}"
-                ),
+                "text": f"{end:%Y-%m-%d} · {len(rows)}개 소식",
             }],
         },
         {
@@ -227,15 +173,131 @@ def _report_shell(
     return prefix, suffix
 
 
-def _fits_message(
-    content_blocks: list[dict[str, Any]],
-    shell_blocks: list[dict[str, Any]],
-) -> bool:
-    blocks = shell_blocks + content_blocks
-    return (
-        len(blocks) <= MAX_BLOCKS_PER_MESSAGE
-        and sum(_text_length(block) for block in blocks) <= MAX_TEXT_PER_MESSAGE
+def _truncate_text(value: str, limit: int) -> str:
+    value = value.strip()
+    if len(value) <= limit:
+        return value
+    if limit <= 0:
+        return ""
+    if limit == 1:
+        return "…"
+    cutoff = limit - 1
+    word_boundary = value.rfind(" ", 0, cutoff + 1)
+    if word_boundary >= limit * 2 // 3:
+        cutoff = word_boundary
+    return f"{value[:cutoff].rstrip()}…"
+
+
+def _allocate_item_budgets(capacities: list[int], available: int) -> list[int]:
+    budgets = [0] * len(capacities)
+    remaining = min(available, sum(capacities))
+    while remaining:
+        active = [index for index, cap in enumerate(capacities) if budgets[index] < cap]
+        if not active:
+            break
+        share = max(1, remaining // len(active))
+        for index in active:
+            amount = min(share, capacities[index] - budgets[index], remaining)
+            budgets[index] += amount
+            remaining -= amount
+            if not remaining:
+                break
+    return budgets
+
+
+def _split_item_budget(summary: str, why: str, budget: int) -> tuple[str, str]:
+    full_length = len(summary) + len(why)
+    if full_length <= budget:
+        return summary, why
+    if not full_length or budget <= 0:
+        return "", ""
+    summary_budget = min(len(summary), budget * len(summary) // full_length)
+    why_budget = min(len(why), budget - summary_budget)
+    remaining = budget - summary_budget - why_budget
+    if remaining:
+        extra = min(len(summary) - summary_budget, remaining)
+        summary_budget += extra
+        remaining -= extra
+    if remaining:
+        why_budget += min(len(why) - why_budget, remaining)
+    return _truncate_text(summary, summary_budget), _truncate_text(why, why_budget)
+
+
+def _entry_blocks(entries: list[str]) -> list[dict[str, Any]]:
+    blocks: list[dict[str, Any]] = []
+    current = ""
+    for entry in entries:
+        parts = _split_text(entry) if len(entry) > SECTION_TEXT_LIMIT else [entry]
+        for part in parts:
+            candidate = f"{current}\n\n{part}" if current else part
+            if current and len(candidate) > SECTION_TEXT_LIMIT:
+                blocks.append({
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": current},
+                })
+                current = part
+            else:
+                current = candidate
+    if current:
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": current}})
+    return blocks
+
+
+def _platform_message(
+    rows: list[tuple[Content, TopicSummary]],
+    start: datetime,
+    end: datetime,
+    collection_results: list[CollectionResult] | None,
+    source_name: str,
+    group_name: str,
+) -> list[dict[str, Any]]:
+    prefix, suffix = _platform_shell(
+        rows, start, end, collection_results, source_name, group_name
     )
+    shell = prefix + suffix
+    item_data = []
+    for index, (content, summary) in enumerate(rows, start=1):
+        title = (
+            f"*{index}. [{_area_label(content, summary)}] "
+            f"<{content.url}|{summary.title_ko}>*"
+        )
+        metric = f"_{_metric_text(content)}_"
+        item_data.append((title, summary.summary_ko, summary.why_important, metric))
+
+    separators = max(0, len(item_data) - 1) * 2
+    fixed_lengths = [
+        len(title) + len("*💡 실무 포인트*") + len(metric) + 5
+        for title, _, _, metric in item_data
+    ]
+    shell_length = sum(_text_length(block) for block in shell)
+    available_body = (
+        MAX_TEXT_PER_MESSAGE
+        - shell_length
+        - sum(fixed_lengths)
+        - separators
+    )
+    capacities = [
+        max(0, min(
+            len(summary) + len(why),
+            SECTION_TEXT_LIMIT - fixed_length,
+        ))
+        for (_, summary, why, _), fixed_length in zip(item_data, fixed_lengths, strict=True)
+    ]
+    budgets = _allocate_item_budgets(capacities, available_body)
+    entries = []
+    for (title, summary, why, metric), budget in zip(item_data, budgets, strict=True):
+        short_summary, short_why = _split_item_budget(summary, why, budget)
+        entries.append(
+            f"{title}\n{short_summary}\n\n"
+            f"*💡 실무 포인트*\n{short_why}\n{metric}"
+        )
+    blocks = prefix + _entry_blocks(entries) + suffix
+    if (
+        len(blocks) > MAX_BLOCKS_PER_MESSAGE
+        or sum(_text_length(block) for block in blocks) > MAX_TEXT_PER_MESSAGE
+    ):
+        raise ValueError(f"{source_name} results exceed a single Slack message limit")
+    return blocks
 
 
 def build_messages(
@@ -243,66 +305,35 @@ def build_messages(
     start: datetime,
     end: datetime,
     collection_results: list[CollectionResult] | None = None,
-    news_sources: set[str] | None = None,
-) -> dict[str, list[list[dict[str, Any]]]]:
-    news_sources = news_sources or set()
-    groups: dict[str, list[tuple[Content, TopicSummary]]] = {
-        "AI 뉴스": [],
-        "AI 기술": [],
-    }
-    for row in rows:
-        group_name = "AI 뉴스" if row[0].source in news_sources else "AI 기술"
-        groups[group_name].append(row)
-
-    messages: dict[str, list[list[dict[str, Any]]]] = {}
-    for group_name, group_rows in groups.items():
-        group_results = (
-            [
-                result for result in collection_results
-                if ("AI 뉴스" if result.source in news_sources else "AI 기술") == group_name
-            ]
-            if collection_results is not None else None
+    platforms: list[tuple[str, str, str]] | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    if platforms is None:
+        sources = dict.fromkeys(
+            [content.source for content, _ in rows]
+            + [result.source for result in collection_results or []]
         )
-        prefix, suffix = _report_shell(
-            group_rows, start, end, group_results, group_name, 1, 1
-        )
-        shell_blocks = prefix + suffix
-        item_blocks = [
-            _item_blocks(index, content, summary)
-            for index, (content, summary) in enumerate(group_rows, start=1)
+        platforms = [
+            (source, SOURCE_LABELS.get(source, source), "AI 기술")
+            for source in sources
         ]
-        pages: list[list[dict[str, Any]]] = []
-        current: list[dict[str, Any]] = []
-        for entry_blocks in item_blocks:
-            candidate = current + entry_blocks
-            if current and not _fits_message(candidate, shell_blocks):
-                pages.append(current)
-                current = []
-                candidate = entry_blocks
-            if _fits_message(candidate, shell_blocks):
-                current = candidate
-                continue
-            for block in entry_blocks:
-                if current and not _fits_message(current + [block], shell_blocks):
-                    pages.append(current)
-                    current = []
-                current.append(block)
-        if current or not pages:
-            pages.append(current)
+    rows_by_source: dict[str, list[tuple[Content, TopicSummary]]] = {}
+    for row in rows:
+        rows_by_source.setdefault(row[0].source, []).append(row)
+    results_by_source = {
+        result.source: result for result in collection_results or []
+    }
 
-        group_messages = []
-        for page_number, page_blocks in enumerate(pages, start=1):
-            prefix, suffix = _report_shell(
-                group_rows,
-                start,
-                end,
-                group_results,
-                group_name,
-                page_number,
-                len(pages),
-            )
-            group_messages.append(prefix + page_blocks + suffix)
-        messages[group_name] = group_messages
+    messages: dict[str, list[dict[str, Any]]] = {}
+    for source, source_name, group_name in platforms:
+        result = results_by_source.get(source)
+        messages[source] = _platform_message(
+            rows_by_source.get(source, []),
+            start,
+            end,
+            [result] if result else None,
+            source_name,
+            group_name,
+        )
     return messages
 
 
@@ -312,8 +343,9 @@ def build_blocks(
     end: datetime,
     collection_results: list[CollectionResult] | None = None,
 ) -> list[dict[str, Any]]:
-    messages = build_messages(rows, start, end, collection_results)
-    return [block for page in messages["AI 기술"] for block in page]
+    return _platform_message(
+        rows, start, end, collection_results, "전체 소식", "AI 기술"
+    )
 
 
 def _status_label(status: CollectionStatus) -> str:
@@ -353,7 +385,7 @@ class SlackReporter:
     async def send(
         self,
         report_date: date,
-        messages: dict[str, list[list[dict[str, Any]]]] | list[dict[str, Any]],
+        messages: dict[str, list[dict[str, Any]]] | list[dict[str, Any]],
         force: bool = False,
         dry_run: bool = False,
     ) -> bool:
@@ -367,25 +399,24 @@ class SlackReporter:
             if sent and not force:
                 return False
         if isinstance(messages, list):
-            messages = {"AI 기술": [messages]}
+            messages = {"전체 소식": messages}
         message_index = 0
-        for group_messages in messages.values():
-            for blocks in group_messages:
-                if message_index:
-                    await asyncio.sleep(1)
-                for attempt in range(3):
-                    response = await self.client.post(self.webhook, json={"blocks": blocks})
-                    if response.status_code != 429:
-                        response.raise_for_status()
-                        break
-                    if attempt == 2:
-                        response.raise_for_status()
-                    try:
-                        retry_after = float(response.headers.get("Retry-After", "1"))
-                    except ValueError:
-                        retry_after = 1
-                    await asyncio.sleep(max(retry_after, 1))
-                message_index += 1
+        for blocks in messages.values():
+            if message_index:
+                await asyncio.sleep(1)
+            for attempt in range(3):
+                response = await self.client.post(self.webhook, json={"blocks": blocks})
+                if response.status_code != 429:
+                    response.raise_for_status()
+                    break
+                if attempt == 2:
+                    response.raise_for_status()
+                try:
+                    retry_after = float(response.headers.get("Retry-After", "1"))
+                except ValueError:
+                    retry_after = 1
+                await asyncio.sleep(max(retry_after, 1))
+            message_index += 1
         with self.store.session() as session:
             row = session.scalar(
                 select(ReportRow).where(ReportRow.report_date == report_date.isoformat())

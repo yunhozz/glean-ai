@@ -27,6 +27,7 @@ def configure_logging() -> None:
 class DailyService:
     def __init__(self, settings: Settings, store: Store, client: httpx.AsyncClient) -> None:
         self.settings, self.store, self.client = settings, store, client
+        self._store_lock = asyncio.Lock()
 
     def collectors(self) -> dict[str, object]:
         github_token = (
@@ -91,17 +92,17 @@ class DailyService:
         if not enabled:
             log.warning("source_disabled", source=name)
             result = CollectionResult(source=name, status=CollectionStatus.DISABLED)
-            self._record(result, started, dry_run)
+            await self._persist([], result, started, dry_run)
             return name, result
         try:
             contents: list[Content] = await collector.collect(interests)  # type: ignore[attr-defined]
             fetched_count = len(contents)
-            contents = process(
+            contents = await asyncio.to_thread(
+                process,
                 contents,
                 interests.get("keywords", []),
                 include_unmatched=isinstance(collector, RSSCollector),
             )
-            inserted = 0 if dry_run else sum(self.store.upsert(item) for item in contents)
             partial_errors = collector.partial_errors  # type: ignore[attr-defined]
             status = (
                 CollectionStatus.PARTIAL if partial_errors
@@ -118,14 +119,14 @@ class DailyService:
                 error_code=error.code if error else None,
                 error_message=str(error) if error else None,
             )
-            self._record(result, started, dry_run)
+            inserted = await self._persist(contents, result, started, dry_run)
             log.info("source_collected", source=name, status=status, inserted=inserted)
             return name, result
         except Exception as exc:
             if isinstance(exc, CollectorError):
                 error_code = exc.code
                 safe_error = str(exc)[:200]
-            elif name == "toss_tech" and isinstance(exc, httpx.TransportError):
+            elif isinstance(exc, httpx.TransportError):
                 error_code = "transport"
                 safe_error = type(exc).__name__
             else:
@@ -142,14 +143,31 @@ class DailyService:
                 error_code=error_code,
                 error_message=safe_error,
             )
-            self._record(result, started, dry_run)
+            await self._persist([], result, started, dry_run)
             return name, result
 
-    def _record(
-        self, result: CollectionResult, started: datetime, dry_run: bool
-    ) -> None:
+    async def _persist(
+        self,
+        contents: list[Content],
+        result: CollectionResult,
+        started: datetime,
+        dry_run: bool,
+    ) -> int:
         if dry_run:
-            return
+            return 0
+        async with self._store_lock:
+            return await asyncio.to_thread(self._persist_sync, contents, result, started)
+
+    def _persist_sync(
+        self, contents: list[Content], result: CollectionResult, started: datetime
+    ) -> int:
+        inserted = self.store.upsert_many(contents) if contents else 0
+        self._record(result, started)
+        return inserted
+
+    def _record(
+        self, result: CollectionResult, started: datetime
+    ) -> None:
         with self.store.session() as session:
             session.add(RunRow(
                 kind="collect",
@@ -164,5 +182,20 @@ class DailyService:
             ))
 
     def recent(self, hours: int = 24) -> list[Content]:
-        rows = self.store.recent(datetime.now(timezone.utc) - timedelta(hours=hours))
-        return [Content.model_validate({column.name: getattr(row, column.name) for column in row.__table__.columns if column.name != "id"}) for row in rows]
+        tech_blog_sources = {
+            feed["id"] for feed in self.settings.rss_feeds() if feed["group"] == "technology"
+        }
+        rows = self.store.recent(
+            datetime.now(timezone.utc) - timedelta(hours=hours), tech_blog_sources
+        )
+        items = []
+        for row in rows:
+            data = {
+                column.name: getattr(row, column.name)
+                for column in row.__table__.columns if column.name != "id"
+            }
+            for field in ("published_at", "collected_at"):
+                if data[field].tzinfo is None:
+                    data[field] = data[field].replace(tzinfo=timezone.utc)
+            items.append(Content.model_validate(data))
+        return items

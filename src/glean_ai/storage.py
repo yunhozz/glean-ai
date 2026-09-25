@@ -75,27 +75,43 @@ class Store:
             session.commit()
 
     def upsert(self, content: Content) -> bool:
-        with self.session() as session:
-            existing = session.scalar(select(ContentRow).where(
-                ContentRow.source == content.source,
-                ContentRow.external_id == content.external_id,
-            ))
-            data = content.model_dump()
-            data["url"] = str(content.url)
-            data["metrics"] = content.metrics.model_dump()
-            if existing:
-                if content.source == "huggingface":
-                    for name, value in data.items():
-                        setattr(existing, name, value)
-                return False
-            session.add(ContentRow(**data))
-            return True
+        return self.upsert_many([content]) > 0
 
-    def recent(self, since: datetime) -> list[ContentRow]:
+    def upsert_many(self, contents: list[Content]) -> int:
+        if not contents:
+            return 0
+        with self.session() as session:
+            existing = {
+                row.external_id: row
+                for row in session.scalars(select(ContentRow).where(
+                    ContentRow.source == contents[0].source,
+                    ContentRow.external_id.in_(item.external_id for item in contents),
+                ))
+            }
+            inserted = 0
+            for content in contents:
+                data = content.model_dump()
+                data["url"] = str(content.url)
+                data["metrics"] = content.metrics.model_dump()
+                row = existing.get(content.external_id)
+                if row:
+                    if content.source == "huggingface":
+                        for name, value in data.items():
+                            setattr(row, name, value)
+                    continue
+                row = ContentRow(**data)
+                session.add(row)
+                existing[content.external_id] = row
+                inserted += 1
+        return inserted
+
+    def recent(self, since: datetime, tech_blog_sources: set[str] | None = None) -> list[ContentRow]:
+        tech_blog_sources = tech_blog_sources or set()
         with self.session() as session:
             return list(session.scalars(select(ContentRow).where(
                 or_(
                     and_(ContentRow.source == "huggingface", ContentRow.collected_at >= since),
                     and_(ContentRow.source != "huggingface", ContentRow.published_at >= since),
+                    and_(ContentRow.source.in_(tech_blog_sources), ContentRow.collected_at >= since),
                 )
             ).order_by(ContentRow.final_score.desc())).all())

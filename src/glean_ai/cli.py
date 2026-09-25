@@ -8,7 +8,7 @@ import structlog
 import typer
 
 from .config import get_settings
-from .models import CollectionResult, CollectionStatus, Content, TopicSummary
+from .models import CollectionResult, Content, TopicSummary
 from .pipeline import canonical_url
 from .reporters import SlackReporter, build_messages
 from .service import DailyService, configure_logging
@@ -54,11 +54,27 @@ async def _make_report(
     dry_run: bool,
     force: bool,
     collection_results: dict[str, CollectionResult] | None = None,
-) -> dict[str, list[list[dict[str, Any]]]]:
+) -> dict[str, list[dict[str, Any]]]:
     service, store, client = runtime()
     settings = get_settings()
     try:
-        recent_items = service.recent(hours)
+        platforms = [
+            (
+                feed["id"],
+                feed["name"],
+                "AI 뉴스" if feed["group"] == "news" else "AI 기술",
+            )
+            for feed in settings.rss_feeds()
+        ]
+        platforms.extend([
+            ("github", "GitHub", "AI 기술"),
+            ("huggingface", "Hugging Face", "AI 기술"),
+            ("reddit", "Reddit", "AI 기술"),
+        ])
+        source_ids = {source for source, _, _ in platforms}
+        recent_items = [
+            item for item in service.recent(hours) if item.source in source_ids
+        ]
         if dry_run and collection_results:
             known_ids = {(item.source, item.external_id) for item in recent_items}
             known_urls = {canonical_url(str(item.url)) for item in recent_items}
@@ -66,6 +82,7 @@ async def _make_report(
                 item
                 for result in collection_results.values()
                 for item in result.contents
+                if item.source in source_ids
                 if (item.source, item.external_id) not in known_ids
                 and canonical_url(str(item.url)) not in known_urls
             )
@@ -79,15 +96,12 @@ async def _make_report(
 
         summaries = await asyncio.gather(*(summarize(item) for item in items))
         end = datetime.now(timezone.utc).astimezone(settings.tz)
-        news_sources = {
-            feed["id"] for feed in settings.rss_feeds() if feed["group"] == "news"
-        }
         messages = build_messages(
             list(zip(items, summaries, strict=True)),
             end - timedelta(hours=hours),
             end,
             list(collection_results.values()) if collection_results is not None else None,
-            news_sources,
+            platforms=platforms,
         )
         if send:
             reporter = SlackReporter(store, client, settings.slack_webhook_url.get_secret_value() if settings.slack_webhook_url else None)
@@ -132,13 +146,6 @@ def daily(dry_run: bool = False, force: bool = False) -> None:
             ))
         finally:
             await client.aclose()
-        unavailable = {
-            CollectionStatus.FAILED,
-            CollectionStatus.DISABLED,
-            CollectionStatus.NOT_CONFIGURED,
-        }
-        if all(result.status in unavailable for result in results.values()):
-            raise RuntimeError("all collection sources are unavailable")
         typer.echo(json.dumps(
             await _make_report(24, True, dry_run, force, results), ensure_ascii=False
         ))
