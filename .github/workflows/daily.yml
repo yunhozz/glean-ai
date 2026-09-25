@@ -4,6 +4,12 @@ on:
     - cron: "0 8 * * *"
       timezone: "Asia/Seoul"
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "미리 보기로 실행 (수집 결과 저장 및 Slack 발송 생략)"
+        type: boolean
+        required: true
+        default: true
 jobs:
   report:
     runs-on: ubuntu-latest
@@ -15,11 +21,17 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install .
-      - run: alembic upgrade head && glean-ai daily
+      - run: alembic upgrade head
+      - name: Collect and report
+        run: |
+          if [[ "${{ inputs.dry_run }}" == "true" ]]; then
+            glean-ai daily --dry-run
+          else
+            glean-ai daily
+          fi
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
           HUGGINGFACE_TOKEN: ${{ secrets.HUGGINGFACE_TOKEN }}
-          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}

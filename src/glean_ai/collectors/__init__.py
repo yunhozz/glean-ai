@@ -1,6 +1,6 @@
 from .github import GitHubCollector
 from .huggingface import HuggingFaceCollector
 from .reddit import RedditCollector
-from .threads import ThreadsCollector
+from .rss import RSSCollector
 
-__all__ = ["GitHubCollector", "HuggingFaceCollector", "RedditCollector", "ThreadsCollector"]
+__all__ = ["GitHubCollector", "HuggingFaceCollector", "RedditCollector", "RSSCollector"]

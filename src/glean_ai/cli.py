@@ -7,7 +7,7 @@ import typer
 
 from .config import get_settings
 from .models import CollectionResult, CollectionStatus
-from .pipeline import select_report_items
+from .pipeline import canonical_url, select_report_items
 from .reporters import SlackReporter, build_blocks
 from .service import DailyService, configure_logging
 from .storage import Store
@@ -59,8 +59,19 @@ async def _make_report(
             name for name, result in (collection_results or {}).items()
             if result.status in {CollectionStatus.SUCCESS, CollectionStatus.PARTIAL}
         ]
+        recent_items = service.recent(hours)
+        if dry_run and collection_results:
+            known_ids = {(item.source, item.external_id) for item in recent_items}
+            known_urls = {canonical_url(str(item.url)) for item in recent_items}
+            recent_items.extend(
+                item
+                for result in collection_results.values()
+                for item in result.contents
+                if (item.source, item.external_id) not in known_ids
+                and canonical_url(str(item.url)) not in known_urls
+            )
         items = select_report_items(
-            service.recent(hours), settings.report_top_n, preferred_sources
+            recent_items, settings.report_top_n, preferred_sources
         )
         summarizer = Summarizer(client, settings.llm_api_key.get_secret_value() if settings.llm_api_key else None, settings.llm_base_url, settings.llm_model)
         summaries = await asyncio.gather(*(summarizer.summarize(item) for item in items))

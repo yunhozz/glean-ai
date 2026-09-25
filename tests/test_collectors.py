@@ -6,7 +6,6 @@ from glean_ai.collectors import (
     GitHubCollector,
     HuggingFaceCollector,
     RedditCollector,
-    ThreadsCollector,
 )
 from glean_ai.collectors.github import build_queries
 from glean_ai.config import Settings
@@ -42,7 +41,7 @@ def github_item() -> dict[str, object]:
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_four_collectors_normalize():
+async def test_three_collectors_normalize():
     respx.get("https://api.github.com/search/repositories").mock(
         return_value=httpx.Response(200, json={"items": [github_item()]})
     )
@@ -56,23 +55,15 @@ async def test_four_collectors_normalize():
     respx.get("https://www.reddit.com/r/artificial/top/.rss?t=day").mock(
         return_value=httpx.Response(200, text=REDDIT_FEED)
     )
-    respx.get("https://graph.threads.net/v1.0/keyword_search").mock(
-        return_value=httpx.Response(200, json={"data": [{
-            "id": "t", "text": "AI news", "username": "a",
-            "permalink": "https://threads.net/@a/post/t",
-            "timestamp": "2026-08-31T00:00:00Z", "media_type": "TEXT_POST",
-        }]})
-    )
     async with httpx.AsyncClient() as client:
         interests = {"keywords": ["AI"], "subreddits": ["artificial"]}
         results = (
             await GitHubCollector(client).collect(interests),
             await HuggingFaceCollector(client).collect(interests),
             await RedditCollector(client).collect(interests),
-            await ThreadsCollector(client, token="threads-token").collect(interests),
         )
     assert [result[0].source for result in results] == [
-        "github", "huggingface", "reddit", "threads",
+        "github", "huggingface", "reddit",
     ]
 
 
@@ -151,25 +142,6 @@ async def test_github_excludes_repositories_below_minimum_stars():
         result = await GitHubCollector(client).collect({"keywords": ["AI"]})
 
     assert result == []
-
-
-@pytest.mark.asyncio
-@respx.mock
-async def test_threads_deduplicates_keyword_results():
-    route = respx.get("https://graph.threads.net/v1.0/keyword_search").mock(
-        return_value=httpx.Response(200, json={"data": [{
-            "id": "t", "text": "AI news", "username": "a",
-            "permalink": "https://threads.net/@a/post/t",
-            "timestamp": "2026-08-31T00:00:00Z", "media_type": "TEXT_POST",
-        }]})
-    )
-    async with httpx.AsyncClient() as client:
-        result = await ThreadsCollector(client, token="token").collect(
-            {"keywords": ["AI", "LLM"]}
-        )
-    assert route.call_count == 2
-    assert [item.external_id for item in result] == ["t"]
-    assert route.calls[0].request.url.params["search_type"] == "RECENT"
 
 
 @pytest.mark.asyncio

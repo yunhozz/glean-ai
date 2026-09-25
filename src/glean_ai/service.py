@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 import structlog
 
-from .collectors import GitHubCollector, HuggingFaceCollector, RedditCollector, ThreadsCollector
+from .collectors import GitHubCollector, HuggingFaceCollector, RedditCollector, RSSCollector
 from .collectors.base import CollectorError
 from .config import Settings
 from .models import CollectionResult, CollectionStatus, Content
@@ -36,11 +36,7 @@ class DailyService:
             self.settings.huggingface_token.get_secret_value()
             if self.settings.huggingface_token else None
         )
-        threads_token = (
-            self.settings.threads_access_token.get_secret_value()
-            if self.settings.threads_access_token else None
-        )
-        return {
+        collectors = {
             "github": GitHubCollector(
                 self.client, self.settings.source_limit, token=github_token
             ),
@@ -52,10 +48,16 @@ class DailyService:
                 self.settings.source_limit,
                 user_agent=self.settings.reddit_user_agent,
             ),
-            "threads": ThreadsCollector(
-                self.client, self.settings.source_limit, token=threads_token
-            ),
         }
+        for feed in self.settings.rss_feeds():
+            collectors[feed["id"]] = RSSCollector(
+                self.client,
+                feed["id"],
+                feed["name"],
+                feed["url"],
+                self.settings.source_limit,
+            )
+        return collectors
 
     async def collect(
         self, source: str | None = None, dry_run: bool = False
@@ -65,9 +67,9 @@ class DailyService:
             "github": self.settings.github_enabled,
             "huggingface": self.settings.huggingface_enabled,
             "reddit": self.settings.reddit_enabled,
-            "threads": self.settings.threads_enabled,
         }
         selected = self.collectors()
+        enabled.update({feed["id"]: True for feed in self.settings.rss_feeds()})
         if source:
             if source not in selected:
                 raise ValueError(f"unsupported or unavailable source: {source}")
@@ -94,7 +96,13 @@ class DailyService:
         try:
             contents: list[Content] = await collector.collect(interests)  # type: ignore[attr-defined]
             fetched_count = len(contents)
-            contents = process(contents, interests.get("keywords", []))
+            contents = process(
+                contents,
+                interests.get("keywords", []),
+                include_unmatched=isinstance(collector, RSSCollector),
+            )
+            if name in {"github", "huggingface", "reddit"}:
+                contents = contents[:1]
             inserted = 0 if dry_run else sum(self.store.upsert(item) for item in contents)
             partial_errors = collector.partial_errors  # type: ignore[attr-defined]
             status = (

@@ -12,3 +12,59 @@ subreddits:
   - artificial
   - MachineLearning
   - LocalLLaMA
+ai_news_feeds:
+  - id: ai_times
+    name: AI타임스
+    url: https://www.aitimes.com/rss/allArticle.xml
+  - id: techcrunch_ai
+    name: TechCrunch AI
+    url: https://techcrunch.com/category/artificial-intelligence/feed/
+  - id: the_decoder
+    name: The Decoder
+    url: https://the-decoder.com/feed/
+  - id: the_verge_ai
+    name: The Verge AI
+    url: https://www.theverge.com/rss/ai-artificial-intelligence/index.xml
+  - id: hacker_news_ai
+    name: Hacker News (AI)
+    url: https://hnrss.org/newest?q=AI
+  - id: wired_ai
+    name: Wired AI
+    url: https://www.wired.com/feed/tag/ai/latest/rss
+  - id: venturebeat_ai
+    name: VentureBeat AI
+    url: https://venturebeat.com/category/ai/feed/
+  - id: ars_technica_ai
+    name: Ars Technica AI
+    url: https://arstechnica.com/ai/feed/
+  - id: openai_news
+    name: OpenAI News
+    url: https://openai.com/news/rss.xml
+  - id: siliconangle_ai
+    name: SiliconANGLE AI
+    url: https://siliconangle.com/category/ai/feed/
+  - id: mit_technology_review_ai
+    name: MIT Technology Review AI
+    url: https://www.technologyreview.com/topic/artificial-intelligence/feed/
+  - id: google_ai_blog
+    name: Google AI Blog
+    url: https://blog.google/technology/ai/rss/
+  - id: google_deepmind_blog
+    name: Google DeepMind Blog
+    url: https://deepmind.google/blog/rss.xml
+  - id: marktechpost
+    name: MarkTechPost
+    url: https://www.marktechpost.com/feed/
+tech_blogs:
+  - id: kakao_tech
+    name: 카카오 테크
+    url: https://tech.kakao.com/feed/
+  - id: naver_d2
+    name: 네이버 D2
+    url: https://d2.naver.com/d2.atom
+  - id: toss_tech
+    name: 토스 테크
+    url: https://toss.tech/rss.xml
+  - id: woowahan_tech
+    name: 우아한형제들 기술블로그
+    url: https://techblog.woowahan.com/feed/

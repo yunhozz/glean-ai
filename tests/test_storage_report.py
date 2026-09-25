@@ -148,14 +148,12 @@ def test_blocks_show_partial_collection_status():
             error_message="HTTP 401",
         ),
         CollectionResult(source="huggingface", status=CollectionStatus.EMPTY),
-        CollectionResult(source="threads", status=CollectionStatus.NOT_CONFIGURED),
     ])
     text = str(blocks)
     assert "GitHub 3건" in text
     assert "Reddit 실패" in text
     assert "Reddit 인증 실패" in text
     assert "Hugging Face 검색 결과 없음" in text
-    assert "Threads 설정 필요" in text
     assert "HTTP 401" not in text
 
 

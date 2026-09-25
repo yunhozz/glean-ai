@@ -95,9 +95,14 @@ def score(items: list[Content], now: datetime | None = None) -> list[Content]:
     return sorted(items, key=lambda value: value.final_score, reverse=True)
 
 
-def process(items: list[Content], keywords: list[str]) -> list[Content]:
+def process(
+    items: list[Content], keywords: list[str], include_unmatched: bool = False
+) -> list[Content]:
     relevant = [classify(item, keywords) for item in deduplicate(items)]
-    return score([item for item in relevant if item.matched_keywords or item.categories])
+    return score([
+        item for item in relevant
+        if include_unmatched or item.matched_keywords or item.categories
+    ])
 
 
 def select_report_items(
@@ -118,19 +123,25 @@ def select_report_items(
         selected_ids.add(id(item))
         source_counts[item.source] += 1
 
-    # Give every healthy source with a suitable candidate visible representation.
+    # Give the strongest candidate from each healthy source a chance to appear.
+    source_candidates: list[Content] = []
     for source in preferred_sources or []:
         candidate = next((
             item for item in ranked
             if id(item) not in selected_ids
             and item.source == source
-            and (item.matched_keywords or item.categories)
         ), None)
-        if candidate and len(selected) < limit:
-            add(candidate)
+        if candidate:
+            source_candidates.append(candidate)
+    for candidate in sorted(source_candidates, key=lambda item: item.final_score, reverse=True):
+        if len(selected) >= limit:
+            break
+        add(candidate)
 
     # Preserve Product, Dev and Design coverage when suitable signals exist.
     for area in ("기획", "개발", "디자인"):
+        if len(selected) >= limit:
+            break
         candidate = next((
             item for item in ranked
             if id(item) not in selected_ids

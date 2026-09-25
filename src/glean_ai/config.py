@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import yaml
@@ -18,11 +19,9 @@ class Settings(BaseSettings):
     github_token: SecretStr | None = None
     huggingface_token: SecretStr | None = None
     reddit_user_agent: str = "glean-ai/0.1 (contact: github.com/yunhozz/glean-ai)"
-    threads_access_token: SecretStr | None = None
     github_enabled: bool = True
     huggingface_enabled: bool = True
     reddit_enabled: bool = True
-    threads_enabled: bool = True
     source_limit: int = 100
     request_timeout_seconds: float = 20
     timezone: str = "Asia/Seoul"
@@ -34,10 +33,28 @@ class Settings(BaseSettings):
     def tz(self) -> ZoneInfo:
         return ZoneInfo(self.timezone)
 
-    def interests(self) -> dict[str, list[str]]:
+    def _interest_config(self) -> dict[str, Any]:
         with self.interest_config_path.open(encoding="utf-8") as handle:
-            data = yaml.safe_load(handle) or {}
-        return {key: list(value) for key, value in data.items()}
+            return yaml.safe_load(handle) or {}
+
+    def interests(self) -> dict[str, list[str]]:
+        data = self._interest_config()
+        return {
+            key: list(data.get(key, []))
+            for key in ("keywords", "accounts", "repositories", "subreddits")
+        }
+
+    def rss_feeds(self) -> list[dict[str, str]]:
+        data = self._interest_config()
+        return [
+            {
+                "id": str(source["id"]),
+                "name": str(source["name"]),
+                "url": str(source["url"]),
+            }
+            for key in ("ai_news_feeds", "tech_blogs")
+            for source in data.get(key, [])
+        ]
 
 
 @lru_cache

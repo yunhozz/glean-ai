@@ -1,13 +1,13 @@
 # glean-ai
 
-기획·개발·디자인 분야의 AI 신호를 수집·정규화·분석하고 매일 한국어 Slack 브리프를 전송하는 최소 운영 파이프라인입니다.
+AI 뉴스와 국내 기술 블로그의 기술 글을 수집·정규화·분석하고 매일 한국어 Slack 브리프를 전송하는 최소 운영 파이프라인입니다.
 
 ## 가정과 현재 범위
 
 - 실행: Docker Compose, 배포: GitHub Actions cron, DB: PostgreSQL.
 - 보고: 매일 08:00 Asia/Seoul, 한국어, Incoming Webhook, 최대 10건.
-- 수집 상한: source당 100개. 기본 관심 목록은 `config/interests.yaml`.
-- GitHub, Hugging Face, Reddit, Threads를 공식 API로 조회합니다. 테스트는 실제 API를 호출하지 않습니다.
+- 후보 수집 상한: source당 100개. 기본 관심 목록과 RSS/Atom 피드는 `config/interests.yaml`에서 관리합니다.
+- GitHub, Hugging Face, Reddit은 기존 조건에 맞는 후보를 공통 점수순으로 정렬해 source당 1개만 저장합니다. Daily AI Thread의 14개 뉴스 피드와 카카오 테크, 네이버 D2, 토스 테크, 우아한형제들 기술블로그를 RSS/Atom으로 수집합니다.
 - X는 조회 비용이 발생해 운영 대상에서 제외하며 비공식 검색 우회도 사용하지 않습니다.
 - 초기 중복 처리는 canonical URL과 `SequenceMatcher` 문자열 유사도(0.88)를 사용합니다. 운영이 단순하지만 의미가 같은 다른 표현을 놓칠 수 있습니다.
 - GitHub Actions에는 영속 PostgreSQL `DATABASE_URL`이 필요합니다. Actions runner 자체 DB는 실행 간 보존되지 않습니다.
@@ -16,7 +16,7 @@
 
 ```mermaid
 flowchart LR
-  A[GitHub / Hugging Face / Reddit / Threads] --> B[Source adapters]
+  A[GitHub / Hugging Face / Reddit / 뉴스 14개 피드 / 국내 기술 블로그 RSS·Atom] --> B[Source adapters]
   B --> C[정규화]
   C --> D[중복 제거 · 분류 · 점수화]
   D --> E[(PostgreSQL)]
@@ -59,13 +59,15 @@ glean-ai backfill 2026-08-01 2026-08-02  # 기간 수집 진입점
 glean-ai health
 ```
 
-`config/interests.yaml`에서 키워드와 subreddit을 수정합니다. GitHub는 관심 키워드와 관련되고 stars가 10개 이상인 저장소를 최근 업데이트순으로 수집합니다. Hugging Face는 모델만 `trendingScore` 순으로 조회하며, 관심 키워드 또는 AI 작업 태그와 맞고 `trendingScore > 0`, 좋아요 50개 이상, 다운로드 5,000회 이상 중 하나를 충족한 모델을 남깁니다. NSFW·성인물 표시가 모델 ID나 태그에 있으면 제외합니다. Reddit은 공식 공개 RSS에서 최근 하루의 인기 게시물을 순서대로 수집하며 별도 자격증명이 필요하지 않습니다. Threads는 `threads_basic`, `threads_keyword_search` 권한을 승인받은 장기 User Access Token이 필요합니다. 실제 secret은 `.env` 또는 GitHub Secrets에만 둡니다. GitHub Actions에서는 저장소 기본 토큰과 코드에 정의한 고유 Reddit User-Agent를 사용합니다.
+GitHub Actions의 기본 브랜치에 반영한 뒤 `Actions > daily-glean-ai > Run workflow`에서 수동 실행할 수 있습니다. 기본 `dry_run`은 미리 보기이며, 새 수집 결과를 DB에 저장하지 않고 Slack도 발송하지 않습니다. 대신 수집한 항목으로 만든 브리프를 Actions 로그에 출력합니다. 실제 저장·발송을 확인할 때만 입력에서 `dry_run`을 끄면 됩니다. 워크플로는 두 경우 모두 먼저 DB migration을 적용합니다. 실행에는 영속 PostgreSQL을 가리키는 `DATABASE_URL` secret이 필요합니다.
+
+`config/interests.yaml`에서 키워드, subreddit, `ai_news_feeds`, `tech_blogs` 피드를 수정합니다. GitHub는 관심 키워드와 관련되고 stars가 10개 이상인 저장소, Hugging Face는 관심 키워드 또는 AI 작업 태그에 맞고 `trendingScore > 0`, 좋아요 50개 이상 또는 다운로드 5,000회 이상을 충족하는 모델을 후보로 삼습니다. Reddit은 공식 공개 RSS에서 최근 하루의 인기 게시물을 가져옵니다. 세 source 모두 후보를 기존 분류·점수화한 뒤 각 1개만 저장합니다. 뉴스 매체와 기술 블로그 피드는 해당 AI/기술 피드에 포함된 게시물을 수집하므로 기존 AI 키워드 일치 여부를 별도로 요구하지 않습니다. 피드에 공개된 제목·요약·작성자·날짜·원문 링크를 사용하고, 원문 전체는 별도 크롤링하지 않습니다. 피드마다 공개 글 수와 본문 길이가 다르며 MIT Technology Review 등 일부 매체의 원문은 구독이 필요할 수 있습니다. Hacker News 검색 피드는 hnrss.org 중계 서비스에 의존합니다. GitHub Actions에서는 저장소 기본 토큰과 코드에 정의한 Reddit User-Agent를 사용합니다.
 
 ## 점수와 요약
 
 `final = relevance×0.35 + trend×0.30 + quality×0.20 + freshness×0.15`; 전부 0~100입니다. 참여량은 source 내부 최대값으로 정규화하며 각 요소를 `score_reasons` JSON에 보존합니다. 성공한 각 source에 적합한 항목이 있으면 최소 한 건을 먼저 확보하고, 나머지는 점수순으로 채우되 한 source가 전체의 40%를 넘지 않게 합니다.
 
-LLM은 외부 본문을 데이터로 명시하고 구조화 JSON을 검증해 `무슨 소식인지`와 `왜 중요한지`를 한국어로 편집합니다. 2회 실패 또는 키 미설정 시에도 원문 태그를 복사하지 않고 source별 한국어 안내 문구로 계속합니다. 규칙 기반 fallback은 번역·해석이 아니라는 한계가 있습니다.
+LLM은 외부 본문을 데이터로 명시하고 구조화 JSON을 검증해 `무슨 소식인지`와 `왜 중요한지`를 한국어로 편집합니다. 2회 실패 또는 키 미설정 시에도 원문 태그를 복사하지 않고 한국어 안내 문구로 계속합니다. 규칙 기반 fallback은 번역·해석이 아니라는 한계가 있습니다.
 
 ## Slack과 스케줄
 
@@ -80,7 +82,7 @@ mypy
 docker compose config
 ```
 
-mock 기반 4-source 인증·정규화, idempotency, URL/텍스트 중복, 점수, 분류, 부분 실패, LLM fallback, Block Kit, Slack 중복 방지, dry-run을 검증합니다.
+mock 기반 GitHub·Hugging Face·Reddit 정규화, idempotency, URL/텍스트 중복, 점수, 분류, 부분 실패, LLM fallback, Block Kit, Slack 중복 방지, dry-run을 검증합니다.
 
 ## 새 adapter 추가
 
@@ -97,6 +99,6 @@ mock 기반 4-source 인증·정규화, idempotency, URL/텍스트 중복, 점�
 ## 알려진 제약
 
 - Hugging Face 현재 구현은 model만 수집합니다. dataset/space와 GitHub release·증가량 시계열은 후속 범위입니다.
-- Threads 장기 User Access Token은 자동 갱신하지 않으므로 만료 전에 운영자가 교체해야 합니다.
+- RSS/Atom은 게시자가 공개한 피드 항목만 사용합니다. 본문이 피드에 포함되지 않으면 원문 페이지를 별도로 크롤링하지 않습니다.
 - 서로 다른 source의 의미 기반 클러스터링은 문자열 유사도만 사용합니다.
 - 보존 기간 자동 삭제와 상세 리포트 artifact 저장은 아직 없습니다.

@@ -10,7 +10,24 @@ SOURCE_LABELS = {
     "github": "GitHub",
     "huggingface": "Hugging Face",
     "reddit": "Reddit",
-    "threads": "Threads",
+    "ai_times": "AI타임스",
+    "techcrunch_ai": "TechCrunch AI",
+    "the_decoder": "The Decoder",
+    "the_verge_ai": "The Verge AI",
+    "hacker_news_ai": "Hacker News (AI)",
+    "wired_ai": "Wired AI",
+    "venturebeat_ai": "VentureBeat AI",
+    "ars_technica_ai": "Ars Technica AI",
+    "openai_news": "OpenAI News",
+    "siliconangle_ai": "SiliconANGLE AI",
+    "mit_technology_review_ai": "MIT Technology Review AI",
+    "google_ai_blog": "Google AI Blog",
+    "google_deepmind_blog": "Google DeepMind Blog",
+    "marktechpost": "MarkTechPost",
+    "kakao_tech": "카카오 테크",
+    "naver_d2": "네이버 D2",
+    "toss_tech": "토스 테크",
+    "woowahan_tech": "우아한형제들",
 }
 METRIC_LABELS = {
     "likes": "좋아요", "comments": "댓글", "shares": "공유", "views": "조회",
@@ -23,7 +40,7 @@ RANK_LABELS = ("①", "②", "③")
 def _area_label(content: Content, summary: TopicSummary) -> str:
     details = [category.split("/", 1)[1] for category in content.categories[:2]]
     areas = [area for area in summary.areas if area in {"기획", "개발", "디자인"}]
-    return " · ".join(dict.fromkeys(areas + details)) or "AI"
+    return " · ".join(dict.fromkeys(areas + details)) or "기술"
 
 
 def _metric_text(content: Content) -> str:
@@ -65,7 +82,7 @@ def build_blocks(
     blocks: list[dict[str, Any]] = [
         {
             "type": "header",
-            "text": {"type": "plain_text", "text": "🤖 오늘의 AI 브리프"},
+            "text": {"type": "plain_text", "text": "🤖 오늘의 AI·기술 브리프"},
         },
         {
             "type": "context",

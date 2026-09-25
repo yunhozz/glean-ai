@@ -67,7 +67,7 @@ def test_report_selection_balances_sources_and_areas(sample):
 
 def test_report_selection_includes_each_healthy_source(sample):
     items = []
-    for index, source in enumerate(["github", "reddit", "huggingface", "threads"]):
+    for index, source in enumerate(["github", "reddit", "huggingface", "kakao_tech"]):
         item = deepcopy(sample)
         item.external_id = str(index)
         item.source = source
@@ -76,9 +76,9 @@ def test_report_selection_includes_each_healthy_source(sample):
         items.append(item)
 
     selected = select_report_items(
-        items, 4, ["github", "reddit", "huggingface", "threads"]
+        items, 4, ["github", "reddit", "huggingface", "kakao_tech"]
     )
 
     assert {item.source for item in selected} == {
-        "github", "reddit", "huggingface", "threads",
+        "github", "reddit", "huggingface", "kakao_tech",
     }
