@@ -34,3 +34,42 @@ def test_adopt_legacy_schema_rejects_partial_migration() -> None:
         create_legacy_tables(connection, {"error_code"})
         with pytest.raises(RuntimeError, match="partially applied"):
             adopt_legacy_schema(connection)
+
+
+def test_adopt_legacy_schema_with_report_deliveries() -> None:
+    engine = sa.create_engine("sqlite://")
+    with engine.begin() as connection:
+        create_legacy_tables(connection, {"error_code", "fetched_count", "accepted_count"})
+        connection.execute(sa.text(
+            "CREATE TABLE report_deliveries ("
+            "id INTEGER PRIMARY KEY, report_date VARCHAR(10) NOT NULL, "
+            "source VARCHAR(32) NOT NULL, sent_at DATETIME NOT NULL, "
+            "UNIQUE(report_date, source))"
+        ))
+        adopt_legacy_schema(connection)
+        revision = connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
+    assert revision == "0003_report_deliveries"
+
+
+def test_adopt_old_runs_before_report_delivery_migration() -> None:
+    engine = sa.create_engine("sqlite://")
+    with engine.begin() as connection:
+        create_legacy_tables(connection, set())
+        connection.execute(sa.text(
+            "CREATE TABLE report_deliveries ("
+            "id INTEGER PRIMARY KEY, report_date VARCHAR(10) NOT NULL, "
+            "source VARCHAR(32) NOT NULL, sent_at DATETIME NOT NULL, "
+            "UNIQUE(report_date, source))"
+        ))
+        adopt_legacy_schema(connection)
+        revision = connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
+    assert revision == "0001"
+
+
+def test_adopt_legacy_schema_rejects_incomplete_report_deliveries() -> None:
+    engine = sa.create_engine("sqlite://")
+    with engine.begin() as connection:
+        create_legacy_tables(connection, {"error_code", "fetched_count", "accepted_count"})
+        connection.execute(sa.text("CREATE TABLE report_deliveries (id INTEGER PRIMARY KEY)"))
+        with pytest.raises(RuntimeError, match="partially applied"):
+            adopt_legacy_schema(connection)

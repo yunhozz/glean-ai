@@ -5,7 +5,7 @@ from typing import Any
 import httpx
 
 from .models import CollectionResult, CollectionStatus, Content, TopicSummary
-from .storage import ReportRow, Store
+from .storage import ReportDeliveryRow, ReportRow, Store
 
 SOURCE_LABELS = {
     "github": "GitHub",
@@ -257,9 +257,13 @@ def _platform_message(
     shell = prefix + suffix
     item_data = []
     for index, (content, summary) in enumerate(rows, start=1):
-        title = (
+        linked_title = (
             f"*{index}. [{_area_label(content, summary)}] "
             f"<{content.url}|{summary.title_ko}>*"
+        )
+        title = linked_title if len(linked_title) <= SECTION_TEXT_LIMIT else (
+            f"{index}. [{_area_label(content, summary)}] {summary.title_ko}\n"
+            f"<{content.url}|원문 보기>"
         )
         metric = f"_{_metric_text(content)}_"
         item_data.append((title, summary.summary_ko, summary.why_important, metric))
@@ -394,14 +398,35 @@ class SlackReporter:
             return False
         if not self.webhook:
             raise RuntimeError("SLACK_WEBHOOK_URL is not configured")
+        report_day = report_date.isoformat()
         with self.store.session() as session:
-            sent = session.scalar(select(ReportRow).where(ReportRow.report_date == report_date.isoformat()))
+            sent = session.scalar(select(ReportRow).where(ReportRow.report_date == report_day))
             if sent and not force:
                 return False
+            delivery_times = {
+                source: sent_at
+                for source, sent_at in session.execute(
+                    select(ReportDeliveryRow.source, ReportDeliveryRow.sent_at).where(
+                        ReportDeliveryRow.report_date == report_day
+                    )
+                )
+            }
+            resending = sent is not None and any(
+                sent_at > sent.sent_at for sent_at in delivery_times.values()
+            )
+            if sent and resending:
+                delivered = {
+                    source for source, sent_at in delivery_times.items()
+                    if sent_at > sent.sent_at
+                }
+            else:
+                delivered = set() if sent else set(delivery_times)
         if isinstance(messages, list):
             messages = {"전체 소식": messages}
         message_index = 0
-        for blocks in messages.values():
+        for source, blocks in messages.items():
+            if source in delivered:
+                continue
             if message_index:
                 await asyncio.sleep(1)
             for attempt in range(3):
@@ -416,16 +441,29 @@ class SlackReporter:
                 except ValueError:
                     retry_after = 1
                 await asyncio.sleep(max(retry_after, 1))
+            with self.store.session() as session:
+                row = session.scalar(select(ReportDeliveryRow).where(
+                    ReportDeliveryRow.report_date == report_day,
+                    ReportDeliveryRow.source == source,
+                ))
+                if row:
+                    row.sent_at = datetime.now().astimezone()
+                else:
+                    session.add(ReportDeliveryRow(
+                        report_date=report_day,
+                        source=source,
+                        sent_at=datetime.now().astimezone(),
+                    ))
             message_index += 1
         with self.store.session() as session:
             row = session.scalar(
-                select(ReportRow).where(ReportRow.report_date == report_date.isoformat())
+                select(ReportRow).where(ReportRow.report_date == report_day)
             )
             if row:
                 row.sent_at = datetime.now().astimezone()
             else:
                 session.add(ReportRow(
-                    report_date=report_date.isoformat(),
+                    report_date=report_day,
                     sent_at=datetime.now().astimezone(),
                 ))
         return True

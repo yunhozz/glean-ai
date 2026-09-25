@@ -1,6 +1,10 @@
+import asyncio
 import json
 
+import httpx
+
 from glean_ai import cli
+from glean_ai.config import Settings
 from glean_ai.models import CollectionResult, CollectionStatus
 
 
@@ -34,3 +38,31 @@ def test_daily_reports_statuses_when_every_source_is_unavailable(monkeypatch, ca
         "github": "failed",
         "reddit": "not_configured",
     }
+
+
+def test_report_creates_one_message_for_each_configured_source(monkeypatch, tmp_path):
+    config_path = tmp_path / "interests.yaml"
+    config_path.write_text(
+        "ai_news_feeds:\n"
+        "  - id: news_one\n    name: News One\n    url: https://example.com/news.xml\n"
+        "tech_blogs:\n"
+        "  - id: tech_one\n    name: Tech One\n    url: https://example.com/tech.xml\n",
+        encoding="utf-8",
+    )
+    settings = Settings(interest_config_path=config_path)
+
+    class Service:
+        def recent(self, hours):
+            return []
+
+    client = httpx.AsyncClient()
+    monkeypatch.setattr(cli, "runtime", lambda: (Service(), None, client))
+    monkeypatch.setattr(cli, "get_settings", lambda: settings)
+
+    messages = asyncio.run(cli._make_report(24, False, True, False))
+
+    assert list(messages) == [
+        "news_one", "tech_one", "github", "huggingface", "reddit"
+    ]
+    assert "AI 뉴스" in messages["news_one"][0]["text"]["text"]
+    assert "AI 기술" in messages["tech_one"][0]["text"]["text"]

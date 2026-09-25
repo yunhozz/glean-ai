@@ -1,12 +1,14 @@
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
+import json
+import re
 
 import httpx
 import pytest
 import respx
 from pydantic import HttpUrl
 
-from glean_ai.reporters import SlackReporter, build_blocks
+from glean_ai.reporters import SlackReporter, build_blocks, build_messages
 from glean_ai.models import CollectionResult, CollectionStatus, Metrics, TopicSummary
 from glean_ai.storage import ContentRow, ReportRow, Store
 from glean_ai.summarizer import Summarizer
@@ -103,14 +105,14 @@ async def test_llm_fallback_and_blocks(sample):
     async with httpx.AsyncClient() as client:
         summary = await Summarizer(client, None, "https://example.com", "model").summarize(sample)
     blocks = build_blocks([(sample, summary)], datetime.now(timezone.utc) - timedelta(days=1), datetime.now(timezone.utc))
-    assert blocks[0]["text"]["text"] == "🤖 오늘의 AI 브리프"
+    assert blocks[0]["text"]["text"] == "🤖 전체 소식 · AI 기술"
     assert any(sample.title in str(block) for block in blocks)
     assert any("실무 포인트" in str(block) for block in blocks)
     assert all("왜 중요한가" not in str(block) for block in blocks)
     assert "Open source workflow automation" not in str(blocks)
 
 
-def test_blocks_show_three_detailed_items_and_compact_remainder(sample):
+def test_blocks_show_every_item_in_highlighted_format(sample):
     rows = []
     for index in range(5):
         content = deepcopy(sample)
@@ -129,11 +131,10 @@ def test_blocks_show_three_detailed_items_and_compact_remainder(sample):
     text = str(blocks)
 
     assert "🔥 오늘의 주목할 소식" in text
-    assert "📌 함께 볼 소식" in text
-    assert all(f"상세 요약 {index}" in text for index in range(3))
-    assert all(f"상세 요약 {index}" not in text for index in range(3, 5))
+    assert "📌 함께 볼 소식" not in text
+    assert all(f"상세 요약 {index}" in text for index in range(5))
+    assert all(f"실무 내용 {index}" in text for index in range(5))
     assert all(f"소식 {index}" in text for index in range(5))
-    assert sum(block["type"] == "divider" for block in blocks) == 3
     assert len(blocks) <= 50
     assert all(
         len(block["text"]["text"]) <= 2900
@@ -166,6 +167,27 @@ def test_blocks_show_github_metrics_and_reddit_daily_rank(sample):
     assert "GitHub · ⭐ 0 · Fork 0" in text
     assert "Reddit · 🔥 최근 24시간 인기 #2" in text
     assert "공개 지표 없음" not in text
+
+
+def test_long_title_and_url_remain_a_working_link(sample):
+    content = deepcopy(sample)
+    url = "https://example.com/" + "x" * 1950
+    content.url = HttpUrl(url)
+    summary = TopicSummary(
+        title_ko="긴제목" * 320,
+        summary_ko="요약",
+        areas=["개발"],
+        why_important="실무 내용",
+    )
+    now = datetime.now(timezone.utc)
+    blocks = build_messages(
+        [(content, summary)], now - timedelta(days=1), now,
+        platforms=[("github", "GitHub", "AI 기술")],
+    )["github"]
+    sections = [block["text"]["text"] for block in blocks if block["type"] == "section"]
+
+    assert summary.title_ko in "".join(sections)
+    assert any(re.search(rf"<{re.escape(url)}\|[^>]+>", section) for section in sections)
 
 
 def test_blocks_show_partial_collection_status():
@@ -206,3 +228,110 @@ async def test_slack_dedup_and_dry_run(tmp_path):
     assert route.call_count == 2
     with store.session() as session:
         assert session.query(ReportRow).count() == 1
+
+
+@pytest.mark.asyncio
+async def test_retry_sends_only_platforms_not_delivered_before_failure(tmp_path):
+    store = Store(f"sqlite:///{tmp_path}/partial-report.db")
+    store.create_all()
+    messages = {
+        source: [{"type": "header", "text": {"type": "plain_text", "text": source}}]
+        for source in ("github", "reddit")
+    }
+    calls = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        source = json.loads(request.content)["blocks"][0]["text"]["text"]
+        calls.append(source)
+        return httpx.Response(500 if len(calls) == 2 else 200)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        reporter = SlackReporter(store, client, "https://hooks.slack.test/1")
+        day = datetime.now(timezone.utc).date()
+        with pytest.raises(httpx.HTTPStatusError):
+            await reporter.send(day, messages)
+        assert await reporter.send(day, messages) is True
+
+    assert calls == ["github", "reddit", "reddit"]
+    with store.session() as session:
+        assert session.query(ReportRow).count() == 1
+
+
+@pytest.mark.asyncio
+async def test_forced_retry_resumes_platforms_missing_from_that_attempt(tmp_path):
+    store = Store(f"sqlite:///{tmp_path}/forced-report.db")
+    store.create_all()
+    messages = {
+        source: [{"type": "header", "text": {"type": "plain_text", "text": source}}]
+        for source in ("github", "reddit")
+    }
+    calls = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        source = json.loads(request.content)["blocks"][0]["text"]["text"]
+        calls.append(source)
+        return httpx.Response(500 if len(calls) == 4 else 200)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        reporter = SlackReporter(store, client, "https://hooks.slack.test/1")
+        day = datetime.now(timezone.utc).date()
+        assert await reporter.send(day, messages) is True
+        with pytest.raises(httpx.HTTPStatusError):
+            await reporter.send(day, messages, force=True)
+        assert await reporter.send(day, messages) is False
+        assert await reporter.send(day, messages, force=True) is True
+
+    assert calls == ["github", "reddit", "github", "reddit", "reddit"]
+
+
+@pytest.mark.asyncio
+async def test_many_items_keep_every_link_in_one_message_per_platform(tmp_path, sample):
+    rows = []
+    for index in range(100):
+        content = deepcopy(sample)
+        content.external_id = str(index)
+        content.url = HttpUrl(f"https://github.com/acme/project-{index}")
+        summary = TopicSummary(
+            title_ko=f"소식 {index}",
+            summary_ko="요약 " * 150,
+            areas=["개발"],
+            why_important="실무 " * 150,
+        )
+        rows.append((content, summary))
+    now = datetime.now(timezone.utc)
+    messages = build_messages(
+        rows,
+        now - timedelta(days=1),
+        now,
+        [
+            CollectionResult(source="github", status=CollectionStatus.SUCCESS, accepted_count=100),
+            CollectionResult(source="reddit", status=CollectionStatus.FAILED),
+        ],
+        platforms=[("github", "GitHub", "AI 기술"), ("reddit", "Reddit", "AI 기술")],
+    )
+    github_text = str(messages["github"])
+    assert all(
+        f"<{content.url}|소식 {index}>" in github_text
+        for index, (content, _) in enumerate(rows)
+    )
+    assert len(messages["github"]) <= 50
+    assert all(
+        len(block["text"]["text"]) <= 2900
+        for block in messages["github"]
+        if block["type"] == "section"
+    )
+    assert "Reddit 실패" in str(messages["reddit"])
+
+    delivered = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        delivered.append(json.loads(request.content)["blocks"][0]["text"]["text"])
+        return httpx.Response(200)
+
+    store = Store(f"sqlite:///{tmp_path}/platforms.db")
+    store.create_all()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        reporter = SlackReporter(store, client, "https://hooks.slack.test/1")
+        assert await reporter.send(now.date(), messages) is True
+
+    assert delivered == ["🤖 GitHub · AI 기술", "🤖 Reddit · AI 기술"]

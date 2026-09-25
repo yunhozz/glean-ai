@@ -15,6 +15,9 @@ on:
         type: boolean
         required: true
         default: false
+concurrency:
+  group: daily-glean-ai
+  cancel-in-progress: false
 jobs:
   report:
     runs-on: ubuntu-latest

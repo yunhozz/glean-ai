@@ -61,6 +61,15 @@ class ReportRow(Base):
     sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class ReportDeliveryRow(Base):
+    __tablename__ = "report_deliveries"
+    __table_args__ = (UniqueConstraint("report_date", "source", name="uq_report_delivery_source"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    report_date: Mapped[str] = mapped_column(String(10))
+    source: Mapped[str] = mapped_column(String(32))
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class Store:
     def __init__(self, database_url: str) -> None:
         self.engine = create_engine(database_url)

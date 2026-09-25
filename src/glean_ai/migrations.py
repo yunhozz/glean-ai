@@ -19,6 +19,18 @@ def adopt_legacy_schema(connection: Connection) -> None:
         revision = "0002_collection_run_details"
     else:
         raise RuntimeError("runs table has a partially applied 0002 migration")
+    if "report_deliveries" in tables:
+        delivery_columns = {
+            column["name"] for column in inspector.get_columns("report_deliveries")
+        }
+        delivery_unique = any(
+            set(constraint["column_names"]) == {"report_date", "source"}
+            for constraint in inspector.get_unique_constraints("report_deliveries")
+        )
+        if not {"id", "report_date", "source", "sent_at"}.issubset(delivery_columns) or not delivery_unique:
+            raise RuntimeError("report_deliveries table has a partially applied 0003 migration")
+        if revision == "0002_collection_run_details":
+            revision = "0003_report_deliveries"
 
     version_table = Table(
         "alembic_version",
