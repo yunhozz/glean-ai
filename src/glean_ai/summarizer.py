@@ -57,18 +57,15 @@ class Summarizer:
     @staticmethod
     def fallback(content: Content) -> TopicSummary:
         areas = sorted({category.split("/", 1)[0] for category in content.categories}) or ["개발"]
+        summary = ""
         if content.source == "huggingface":
             title = f"{content.title} 주목받는 모델"
-            summary = f"Hugging Face에서 {content.title} 모델이 현재 트렌드에 올랐습니다."
         elif content.source == "github":
             title = f"{content.title} 오픈소스 업데이트"
-            summary = f"GitHub에서 {content.title} 저장소의 최근 업데이트가 포착됐습니다."
         elif content.source == "reddit":
             title = f"AI 커뮤니티 논의: {content.title}"
-            summary = f"Reddit AI 커뮤니티에서 {content.title} 주제의 새 논의가 올라왔습니다."
         else:
             title = content.title
-            summary = ""
         return TopicSummary(
             title_ko=title[:100], summary_ko=summary[:500],
             areas=areas,
