@@ -1,15 +1,16 @@
 import asyncio
 import json
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 import httpx
 import structlog
 import typer
 
 from .config import get_settings
-from .models import CollectionResult, CollectionStatus
-from .pipeline import canonical_url, select_report_items
-from .reporters import SlackReporter, build_blocks
+from .models import CollectionResult, CollectionStatus, Content, TopicSummary
+from .pipeline import canonical_url
+from .reporters import SlackReporter, build_messages
 from .service import DailyService, configure_logging
 from .storage import Store
 from .summarizer import Summarizer
@@ -53,14 +54,10 @@ async def _make_report(
     dry_run: bool,
     force: bool,
     collection_results: dict[str, CollectionResult] | None = None,
-) -> list[dict[str, object]]:
+) -> dict[str, list[list[dict[str, Any]]]]:
     service, store, client = runtime()
     settings = get_settings()
     try:
-        preferred_sources = [
-            name for name, result in (collection_results or {}).items()
-            if result.status in {CollectionStatus.SUCCESS, CollectionStatus.PARTIAL}
-        ]
         recent_items = service.recent(hours)
         if dry_run and collection_results:
             known_ids = {(item.source, item.external_id) for item in recent_items}
@@ -72,28 +69,36 @@ async def _make_report(
                 if (item.source, item.external_id) not in known_ids
                 and canonical_url(str(item.url)) not in known_urls
             )
-        items = select_report_items(
-            recent_items, settings.report_top_n, preferred_sources
-        )
+        items = sorted(recent_items, key=lambda item: item.final_score, reverse=True)
         summarizer = Summarizer(client, settings.llm_api_key.get_secret_value() if settings.llm_api_key else None, settings.llm_base_url, settings.llm_model)
-        summaries = await asyncio.gather(*(summarizer.summarize(item) for item in items))
+        semaphore = asyncio.Semaphore(10)
+
+        async def summarize(item: Content) -> TopicSummary:
+            async with semaphore:
+                return await summarizer.summarize(item)
+
+        summaries = await asyncio.gather(*(summarize(item) for item in items))
         end = datetime.now(timezone.utc).astimezone(settings.tz)
-        blocks = build_blocks(
+        news_sources = {
+            feed["id"] for feed in settings.rss_feeds() if feed["group"] == "news"
+        }
+        messages = build_messages(
             list(zip(items, summaries, strict=True)),
             end - timedelta(hours=hours),
             end,
             list(collection_results.values()) if collection_results is not None else None,
+            news_sources,
         )
         if send:
             reporter = SlackReporter(store, client, settings.slack_webhook_url.get_secret_value() if settings.slack_webhook_url else None)
-            sent = await reporter.send(end.date(), blocks, force=force, dry_run=dry_run)
+            sent = await reporter.send(end.date(), messages, force=force, dry_run=dry_run)
             log.info(
                 "slack_report_result",
                 status="sent" if sent else "dry_run" if dry_run else "already_sent",
                 report_date=end.date().isoformat(),
                 force=force,
             )
-        return blocks
+        return messages
     finally:
         await client.aclose()
 

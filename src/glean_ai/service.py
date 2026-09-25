@@ -101,8 +101,6 @@ class DailyService:
                 interests.get("keywords", []),
                 include_unmatched=isinstance(collector, RSSCollector),
             )
-            if name in {"github", "huggingface", "reddit"}:
-                contents = contents[:1]
             inserted = 0 if dry_run else sum(self.store.upsert(item) for item in contents)
             partial_errors = collector.partial_errors  # type: ignore[attr-defined]
             status = (

@@ -26,7 +26,6 @@ class Settings(BaseSettings):
     request_timeout_seconds: float = 20
     timezone: str = "Asia/Seoul"
     report_hour: int = 8
-    report_top_n: int = 10
     interest_config_path: Path = Path("config/interests.yaml")
 
     @property
@@ -51,6 +50,7 @@ class Settings(BaseSettings):
                 "id": str(source["id"]),
                 "name": str(source["name"]),
                 "url": str(source["url"]),
+                "group": "news" if key == "ai_news_feeds" else "technology",
             }
             for key in ("ai_news_feeds", "tech_blogs")
             for source in data.get(key, [])
