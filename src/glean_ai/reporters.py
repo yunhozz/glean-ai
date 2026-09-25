@@ -45,22 +45,22 @@ def _area_label(content: Content, summary: TopicSummary) -> str:
 
 
 def _metric_text(content: Content) -> str:
-    source = SOURCE_LABELS.get(content.source, content.source)
     if content.source == "github":
         return (
-            f"{source} · ⭐ {content.metrics.stars:,} · "
+            f"⭐ {content.metrics.stars:,} · "
             f"Fork {content.metrics.forks:,}"
         )
     if content.source == "reddit":
         rank = content.raw_metadata.get("daily_rank")
-        rank_text = f" #{rank}" if isinstance(rank, int) and rank > 0 else ""
-        return f"{source} · 🔥 최근 24시간 인기{rank_text}"
+        if isinstance(rank, int) and rank > 0:
+            return f"🔥 최근 24시간 인기 #{rank}"
+        return ""
     metrics = " · ".join(
         f"{METRIC_LABELS.get(key, key)} {value:,}"
         for key, value in content.metrics.model_dump().items()
         if value
     )
-    return f"{source} · {metrics or '공개 지표 없음'}"
+    return metrics
 
 
 def _split_text(value: str, limit: int = SECTION_TEXT_LIMIT) -> list[str]:
@@ -235,24 +235,24 @@ def _group_message(
                 f"{topic_summary.title_ko}\n"
                 f"<{content.url}|원문 보기>"
             )
-            metric = f"_{_metric_text(content)}_"
+            metric_text = _metric_text(content)
+            metric = f"_{metric_text}_" if metric_text else ""
             items.append((title, topic_summary.summary_ko, metric))
         source_items.append((source_name, items))
 
     item_data = [item for _, items in source_items for item in items]
-    source_headings = [
-        f"*{source_name} · {len(items)}개 소식*"
-        + ("\n이 기간에 수집된 소식이 없습니다." if not items else "")
-        for source_name, items in source_items
-    ]
-    separators = max(0, len(item_data) + len(source_headings) - 1) * 2
+    fixed_blocks = (
+        len(shell)
+        + len(source_items)
+        + sum(1 for _, items in source_items if not items)
+    )
+    separators = sum(max(0, len(items) - 1) * 2 for _, items in source_items)
     fixed_lengths = [
-        len(title) + len(metric) + (2 if summary else 1)
+        len(title) + len(metric) + (1 if summary else 0) + (1 if metric else 0)
         for title, summary, metric in item_data
     ]
     available_body = (
-        max(0, MAX_BLOCKS_PER_MESSAGE - len(shell)) * SECTION_TEXT_LIMIT
-        - sum(len(heading) for heading in source_headings)
+        max(0, MAX_BLOCKS_PER_MESSAGE - fixed_blocks) * SECTION_TEXT_LIMIT
         - sum(fixed_lengths)
         - separators
     )
@@ -266,25 +266,46 @@ def _group_message(
     budgets = _allocate_item_budgets(capacities, available_body)
 
     while True:
-        entries = []
+        blocks = list(prefix)
         budget_index = 0
-        for heading, (_, items) in zip(source_headings, source_items, strict=True):
-            entries.append(heading)
+        for source_name, items in source_items:
+            blocks.append({
+                "type": "header",
+                "text": {
+                    "type": "plain_text",
+                    "text": f"{source_name} · {len(items)}개 소식",
+                },
+            })
+            if not items:
+                blocks.append({
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": "이 기간에 수집된 소식이 없습니다.",
+                    },
+                })
+                continue
+            entries = []
             for title, summary_text, metric in items:
                 short_summary = _truncate_text(summary_text, budgets[budget_index])
-                item_text = f"{title}\n{short_summary}\n{metric}" if short_summary else (
-                    f"{title}\n{metric}"
-                )
-                entries.append(item_text)
+                item_parts = [title]
+                if short_summary:
+                    item_parts.append(short_summary)
+                if metric:
+                    item_parts.append(metric)
+                entries.append("\n".join(item_parts))
                 budget_index += 1
-        blocks = prefix + _entry_blocks(entries) + suffix
+            blocks.extend(_entry_blocks(entries))
+        blocks.extend(suffix)
         if len(blocks) <= MAX_BLOCKS_PER_MESSAGE:
             return blocks
 
         if not any(budgets):
             raise ValueError(f"{group_name} results exceed a single Slack message limit")
-        used_item_blocks = len(blocks) - len(shell)
-        available_item_blocks = max(1, MAX_BLOCKS_PER_MESSAGE - len(shell))
+        used_item_blocks = len(blocks) - fixed_blocks
+        available_item_blocks = max(1, MAX_BLOCKS_PER_MESSAGE - fixed_blocks)
+        if used_item_blocks <= 0:
+            raise ValueError(f"{group_name} results exceed a single Slack message limit")
         shrink_ratio = min(1, available_item_blocks / used_item_blocks)
         smaller_budgets = [int(budget * shrink_ratio) for budget in budgets]
         if smaller_budgets == budgets:
