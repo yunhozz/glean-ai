@@ -183,7 +183,7 @@ def test_long_title_and_url_remain_a_working_link(sample):
     blocks = build_messages(
         [(content, summary)], now - timedelta(days=1), now,
         platforms=[("github", "GitHub", "AI 기술")],
-    )["github"]
+    )["AI 기술"]
     sections = [block["text"]["text"] for block in blocks if block["type"] == "section"]
 
     assert summary.title_ko in "".join(sections)
@@ -285,7 +285,7 @@ async def test_forced_retry_resumes_platforms_missing_from_that_attempt(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_many_items_keep_every_link_in_one_message_per_platform(tmp_path, sample):
+async def test_many_items_keep_every_link_in_one_technology_message(tmp_path, sample):
     rows = []
     for index in range(100):
         content = deepcopy(sample)
@@ -309,18 +309,18 @@ async def test_many_items_keep_every_link_in_one_message_per_platform(tmp_path, 
         ],
         platforms=[("github", "GitHub", "AI 기술"), ("reddit", "Reddit", "AI 기술")],
     )
-    github_text = str(messages["github"])
+    github_text = str(messages["AI 기술"])
     assert all(
         f"<{content.url}|소식 {index}>" in github_text
         for index, (content, _) in enumerate(rows)
     )
-    assert len(messages["github"]) <= 50
+    assert len(messages["AI 기술"]) <= 50
     assert all(
         len(block["text"]["text"]) <= 2900
-        for block in messages["github"]
+        for block in messages["AI 기술"]
         if block["type"] == "section"
     )
-    assert "Reddit 실패" in str(messages["reddit"])
+    assert "Reddit 실패" in str(messages["AI 기술"])
 
     delivered = []
 
@@ -334,4 +334,110 @@ async def test_many_items_keep_every_link_in_one_message_per_platform(tmp_path, 
         reporter = SlackReporter(store, client, "https://hooks.slack.test/1")
         assert await reporter.send(now.date(), messages) is True
 
-    assert delivered == ["🤖 GitHub · AI 기술", "🤖 Reddit · AI 기술"]
+    assert delivered == ["🤖 AI 기술"]
+
+
+def test_large_github_report_fits_block_limits_and_keeps_every_item(sample):
+    rows = []
+    for index in range(264):
+        content = deepcopy(sample)
+        content.external_id = str(index)
+        content.title = f"org-{index:03}/repository-{index:03}"
+        content.url = HttpUrl(f"https://github.com/org-{index:03}/repository-{index:03}")
+        content.categories = ["topic/모델", "topic/RAG"]
+        content.metrics = Metrics(stars=12_345, forks=678)
+        summary = TopicSummary(
+            title_ko=content.title,
+            summary_ko=f"상세 요약 {index} " * 12,
+            areas=["개발"],
+            why_important=f"실무 포인트 {index} " * 12,
+        )
+        rows.append((content, summary))
+
+    now = datetime.now(timezone.utc)
+    blocks = build_messages(
+        rows,
+        now - timedelta(days=1),
+        now,
+        platforms=[("github", "GitHub", "AI 기술")],
+    )["AI 기술"]
+    text = str(blocks)
+
+    assert len(blocks) <= 50
+    assert all(
+        len(block["text"]["text"]) <= 2900
+        for block in blocks
+        if block["type"] == "section"
+    )
+    assert all(
+        f"<{content.url}|{summary.title_ko}>" in text
+        for content, summary in rows
+    )
+    assert all(summary.summary_ko in text for _, summary in rows)
+    assert all(summary.why_important in text for _, summary in rows)
+    assert "⭐ 12,345" in text
+    assert "Fork 678" in text
+
+
+@pytest.mark.asyncio
+async def test_slack_sends_two_group_messages_with_all_21_source_sections(
+    tmp_path, sample
+):
+    platforms = [
+        (f"news_{index}", f"뉴스 피드 {index}", "AI 뉴스")
+        for index in range(14)
+    ] + [
+        (f"tech_{index}", f"기술 피드 {index}", "AI 기술")
+        for index in range(4)
+    ] + [
+        ("github", "GitHub", "AI 기술"),
+        ("huggingface", "Hugging Face", "AI 기술"),
+        ("reddit", "Reddit", "AI 기술"),
+    ]
+    rows = []
+    for index, (source, source_name, group_name) in enumerate(platforms):
+        content = deepcopy(sample)
+        content.source = source
+        content.external_id = str(index)
+        content.url = HttpUrl(f"https://example.com/{source}")
+        summary = TopicSummary(
+            title_ko=f"소식 {source}",
+            summary_ko=f"요약 {source}",
+            areas=["개발"],
+            why_important=f"실무 포인트 {source}",
+        )
+        rows.append((content, summary))
+
+    now = datetime.now(timezone.utc)
+    messages = build_messages(
+        rows,
+        now - timedelta(days=1),
+        now,
+        platforms=platforms,
+    )
+    assert list(messages) == ["AI 뉴스", "AI 기술"]
+
+    for source, source_name, group_name in platforms:
+        message_text = str(messages[group_name])
+        content, summary = next(row for row in rows if row[0].source == source)
+        assert message_text.count(f"*{source_name} · 1개 소식*") == 1
+        assert f"<{content.url}|{summary.title_ko}>" in message_text
+        assert summary.summary_ko in message_text
+        assert summary.why_important in message_text
+
+    delivered = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        delivered.append(json.loads(request.content)["blocks"])
+        return httpx.Response(200)
+
+    store = Store(f"sqlite:///{tmp_path}/grouped-report.db")
+    store.create_all()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        reporter = SlackReporter(store, client, "https://hooks.slack.test/1")
+        assert await reporter.send(now.date(), messages) is True
+
+    assert [blocks[0]["text"]["text"] for blocks in delivered] == [
+        "🤖 AI 뉴스",
+        "🤖 AI 기술",
+    ]

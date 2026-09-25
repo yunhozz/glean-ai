@@ -40,7 +40,7 @@ def test_daily_reports_statuses_when_every_source_is_unavailable(monkeypatch, ca
     }
 
 
-def test_report_creates_one_message_for_each_configured_source(monkeypatch, tmp_path):
+def test_report_groups_sources_into_news_and_technology_messages(monkeypatch, tmp_path):
     config_path = tmp_path / "interests.yaml"
     config_path.write_text(
         "ai_news_feeds:\n"
@@ -61,8 +61,9 @@ def test_report_creates_one_message_for_each_configured_source(monkeypatch, tmp_
 
     messages = asyncio.run(cli._make_report(24, False, True, False))
 
-    assert list(messages) == [
-        "news_one", "tech_one", "github", "huggingface", "reddit"
-    ]
-    assert "AI 뉴스" in messages["news_one"][0]["text"]["text"]
-    assert "AI 기술" in messages["tech_one"][0]["text"]["text"]
+    assert list(messages) == ["AI 뉴스", "AI 기술"]
+    assert "*News One · 0개 소식*" in str(messages["AI 뉴스"])
+    assert all(
+        f"*{name} · 0개 소식*" in str(messages["AI 기술"])
+        for name in ("Tech One", "GitHub", "Hugging Face", "Reddit")
+    )

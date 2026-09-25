@@ -35,7 +35,6 @@ METRIC_LABELS = {
     "stars": "스타", "forks": "포크", "downloads": "다운로드",
 }
 MAX_BLOCKS_PER_MESSAGE = 50
-MAX_TEXT_PER_MESSAGE = 34_000
 SECTION_TEXT_LIMIT = 2_900
 
 
@@ -80,17 +79,6 @@ def _split_text(value: str, limit: int = SECTION_TEXT_LIMIT) -> list[str]:
     return parts
 
 
-def _text_length(value: Any) -> int:
-    if isinstance(value, dict):
-        return sum(
-            len(item) if key == "text" and isinstance(item, str) else _text_length(item)
-            for key, item in value.items()
-        )
-    if isinstance(value, list):
-        return sum(_text_length(item) for item in value)
-    return 0
-
-
 def _collection_blocks(
     collection_results: list[CollectionResult] | None,
 ) -> list[dict[str, Any]]:
@@ -126,27 +114,23 @@ def _collection_blocks(
     return blocks
 
 
-def _platform_shell(
-    rows: list[tuple[Content, TopicSummary]],
+def _group_shell(
+    row_count: int,
     start: datetime,
     end: datetime,
     collection_results: list[CollectionResult] | None,
-    source_name: str,
     group_name: str,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     prefix: list[dict[str, Any]] = [
         {
             "type": "header",
-            "text": {
-                "type": "plain_text",
-                "text": f"🤖 {source_name} · {group_name}",
-            },
+            "text": {"type": "plain_text", "text": f"🤖 {group_name}"},
         },
         {
             "type": "context",
             "elements": [{
                 "type": "mrkdwn",
-                "text": f"{end:%Y-%m-%d} · {len(rows)}개 소식",
+                "text": f"{end:%Y-%m-%d} · {row_count}개 소식",
             }],
         },
         {
@@ -154,11 +138,6 @@ def _platform_shell(
             "text": {"type": "mrkdwn", "text": "*🔥 오늘의 주목할 소식*"},
         },
     ]
-    if not rows:
-        prefix.append({
-            "type": "section",
-            "text": {"type": "mrkdwn", "text": "이 기간에 수집된 소식이 없습니다."},
-        })
     suffix = _collection_blocks(collection_results)
     suffix.append({
         "type": "context",
@@ -190,7 +169,7 @@ def _truncate_text(value: str, limit: int) -> str:
 
 def _allocate_item_budgets(capacities: list[int], available: int) -> list[int]:
     budgets = [0] * len(capacities)
-    remaining = min(available, sum(capacities))
+    remaining = max(0, min(available, sum(capacities)))
     while remaining:
         active = [index for index, cap in enumerate(capacities) if budgets[index] < cap]
         if not active:
@@ -243,40 +222,57 @@ def _entry_blocks(entries: list[str]) -> list[dict[str, Any]]:
     return blocks
 
 
-def _platform_message(
+def _group_message(
     rows: list[tuple[Content, TopicSummary]],
     start: datetime,
     end: datetime,
     collection_results: list[CollectionResult] | None,
-    source_name: str,
     group_name: str,
+    sources: list[tuple[str, str]],
 ) -> list[dict[str, Any]]:
-    prefix, suffix = _platform_shell(
-        rows, start, end, collection_results, source_name, group_name
+    rows_by_source: dict[str, list[tuple[Content, TopicSummary]]] = {}
+    for row in rows:
+        rows_by_source.setdefault(row[0].source, []).append(row)
+    prefix, suffix = _group_shell(
+        len(rows), start, end, collection_results, group_name
     )
     shell = prefix + suffix
-    item_data = []
-    for index, (content, summary) in enumerate(rows, start=1):
-        linked_title = (
-            f"*{index}. [{_area_label(content, summary)}] "
-            f"<{content.url}|{summary.title_ko}>*"
-        )
-        title = linked_title if len(linked_title) <= SECTION_TEXT_LIMIT else (
-            f"{index}. [{_area_label(content, summary)}] {summary.title_ko}\n"
-            f"<{content.url}|원문 보기>"
-        )
-        metric = f"_{_metric_text(content)}_"
-        item_data.append((title, summary.summary_ko, summary.why_important, metric))
 
-    separators = max(0, len(item_data) - 1) * 2
+    source_items: list[tuple[str, list[tuple[str, str, str, str]]]] = []
+    for source, source_name in sources:
+        items = []
+        for index, (content, topic_summary) in enumerate(
+            rows_by_source.get(source, []), start=1
+        ):
+            linked_title = (
+                f"*{index}. [{_area_label(content, topic_summary)}] "
+                f"<{content.url}|{topic_summary.title_ko}>*"
+            )
+            title = linked_title if len(linked_title) <= SECTION_TEXT_LIMIT else (
+                f"{index}. [{_area_label(content, topic_summary)}] "
+                f"{topic_summary.title_ko}\n"
+                f"<{content.url}|원문 보기>"
+            )
+            metric = f"_{_metric_text(content)}_"
+            items.append((
+                title, topic_summary.summary_ko, topic_summary.why_important, metric
+            ))
+        source_items.append((source_name, items))
+
+    item_data = [item for _, items in source_items for item in items]
+    source_headings = [
+        f"*{source_name} · {len(items)}개 소식*"
+        + ("\n이 기간에 수집된 소식이 없습니다." if not items else "")
+        for source_name, items in source_items
+    ]
+    separators = max(0, len(item_data) + len(source_headings) - 1) * 2
     fixed_lengths = [
         len(title) + len("*💡 실무 포인트*") + len(metric) + 5
         for title, _, _, metric in item_data
     ]
-    shell_length = sum(_text_length(block) for block in shell)
     available_body = (
-        MAX_TEXT_PER_MESSAGE
-        - shell_length
+        max(0, MAX_BLOCKS_PER_MESSAGE - len(shell)) * SECTION_TEXT_LIMIT
+        - sum(len(heading) for heading in source_headings)
         - sum(fixed_lengths)
         - separators
     )
@@ -288,20 +284,35 @@ def _platform_message(
         for (_, summary, why, _), fixed_length in zip(item_data, fixed_lengths, strict=True)
     ]
     budgets = _allocate_item_budgets(capacities, available_body)
-    entries = []
-    for (title, summary, why, metric), budget in zip(item_data, budgets, strict=True):
-        short_summary, short_why = _split_item_budget(summary, why, budget)
-        entries.append(
-            f"{title}\n{short_summary}\n\n"
-            f"*💡 실무 포인트*\n{short_why}\n{metric}"
-        )
-    blocks = prefix + _entry_blocks(entries) + suffix
-    if (
-        len(blocks) > MAX_BLOCKS_PER_MESSAGE
-        or sum(_text_length(block) for block in blocks) > MAX_TEXT_PER_MESSAGE
-    ):
-        raise ValueError(f"{source_name} results exceed a single Slack message limit")
-    return blocks
+
+    while True:
+        entries = []
+        budget_index = 0
+        for heading, (_, items) in zip(source_headings, source_items, strict=True):
+            entries.append(heading)
+            for title, summary_text, why_text, metric in items:
+                short_summary, short_why = _split_item_budget(
+                    summary_text, why_text, budgets[budget_index]
+                )
+                entries.append(
+                    f"{title}\n{short_summary}\n\n"
+                    f"*💡 실무 포인트*\n{short_why}\n{metric}"
+                )
+                budget_index += 1
+        blocks = prefix + _entry_blocks(entries) + suffix
+        if len(blocks) <= MAX_BLOCKS_PER_MESSAGE:
+            return blocks
+
+        if not any(budgets):
+            raise ValueError(f"{group_name} results exceed a single Slack message limit")
+        used_item_blocks = len(blocks) - len(shell)
+        available_item_blocks = max(1, MAX_BLOCKS_PER_MESSAGE - len(shell))
+        shrink_ratio = min(1, available_item_blocks / used_item_blocks)
+        smaller_budgets = [int(budget * shrink_ratio) for budget in budgets]
+        if smaller_budgets == budgets:
+            largest = max(range(len(budgets)), key=budgets.__getitem__)
+            smaller_budgets[largest] -= 1
+        budgets = smaller_budgets
 
 
 def build_messages(
@@ -312,31 +323,49 @@ def build_messages(
     platforms: list[tuple[str, str, str]] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     if platforms is None:
-        sources = dict.fromkeys(
+        source_ids = dict.fromkeys(
             [content.source for content, _ in rows]
             + [result.source for result in collection_results or []]
         )
         platforms = [
             (source, SOURCE_LABELS.get(source, source), "AI 기술")
-            for source in sources
+            for source in source_ids
         ]
-    rows_by_source: dict[str, list[tuple[Content, TopicSummary]]] = {}
-    for row in rows:
-        rows_by_source.setdefault(row[0].source, []).append(row)
     results_by_source = {
         result.source: result for result in collection_results or []
     }
 
-    messages: dict[str, list[dict[str, Any]]] = {}
+    sources_by_group: dict[str, list[tuple[str, str]]] = {}
     for source, source_name, group_name in platforms:
-        result = results_by_source.get(source)
-        messages[source] = _platform_message(
-            rows_by_source.get(source, []),
+        sources_by_group.setdefault(group_name, []).append((source, source_name))
+
+    source_group = {
+        source: group_name
+        for group_name, sources in sources_by_group.items()
+        for source, _ in sources
+    }
+    rows_by_group: dict[str, list[tuple[Content, TopicSummary]]] = {
+        group_name: [] for group_name in sources_by_group
+    }
+    for row in rows:
+        row_group = source_group.get(row[0].source)
+        if row_group is not None:
+            rows_by_group[row_group].append(row)
+
+    messages: dict[str, list[dict[str, Any]]] = {}
+    for group_name, group_sources in sources_by_group.items():
+        group_source_ids = {source for source, _ in group_sources}
+        group_results = [
+            result for source, result in results_by_source.items()
+            if source in group_source_ids
+        ]
+        messages[group_name] = _group_message(
+            rows_by_group[group_name],
             start,
             end,
-            [result] if result else None,
-            source_name,
+            group_results or None,
             group_name,
+            group_sources,
         )
     return messages
 
@@ -347,8 +376,17 @@ def build_blocks(
     end: datetime,
     collection_results: list[CollectionResult] | None = None,
 ) -> list[dict[str, Any]]:
-    return _platform_message(
-        rows, start, end, collection_results, "전체 소식", "AI 기술"
+    sources = list(dict.fromkeys(
+        [content.source for content, _ in rows]
+        + [result.source for result in collection_results or []]
+    ))
+    return _group_message(
+        rows,
+        start,
+        end,
+        collection_results,
+        "전체 소식 · AI 기술",
+        [(source, SOURCE_LABELS.get(source, source)) for source in sources],
     )
 
 
