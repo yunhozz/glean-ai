@@ -4,7 +4,7 @@ from email.utils import parsedate_to_datetime
 from typing import Any
 
 import httpx
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from ..models import Content
 
@@ -13,6 +13,12 @@ class CollectorError(RuntimeError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
+
+
+def _is_retryable(error: BaseException) -> bool:
+    return isinstance(error, (httpx.TimeoutException, httpx.TransportError)) or (
+        isinstance(error, CollectorError) and error.code == "rate_limited"
+    )
 
 
 class Collector(ABC):
@@ -27,7 +33,7 @@ class Collector(ABC):
     async def collect(self, interests: dict[str, list[str]]) -> list[Content]: ...
 
     @retry(
-        retry=retry_if_exception_type((httpx.TimeoutException, httpx.TransportError)),
+        retry=retry_if_exception(_is_retryable),
         wait=wait_exponential(min=1, max=8),
         stop=stop_after_attempt(3),
         reraise=True,
@@ -37,7 +43,7 @@ class Collector(ABC):
         return await self._response_json(response)
 
     @retry(
-        retry=retry_if_exception_type((httpx.TimeoutException, httpx.TransportError)),
+        retry=retry_if_exception(_is_retryable),
         wait=wait_exponential(min=1, max=8),
         stop=stop_after_attempt(3),
         reraise=True,
@@ -48,7 +54,7 @@ class Collector(ABC):
         return response.text
 
     @retry(
-        retry=retry_if_exception_type((httpx.TimeoutException, httpx.TransportError)),
+        retry=retry_if_exception(_is_retryable),
         wait=wait_exponential(min=1, max=8),
         stop=stop_after_attempt(3),
         reraise=True,

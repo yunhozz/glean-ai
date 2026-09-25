@@ -3,6 +3,7 @@ import json
 from datetime import datetime, timedelta, timezone
 
 import httpx
+import structlog
 import typer
 
 from .config import get_settings
@@ -14,6 +15,7 @@ from .storage import Store
 from .summarizer import Summarizer
 
 app = typer.Typer(no_args_is_help=True)
+log = structlog.get_logger()
 
 
 def runtime() -> tuple[DailyService, Store, httpx.AsyncClient]:
@@ -84,7 +86,13 @@ async def _make_report(
         )
         if send:
             reporter = SlackReporter(store, client, settings.slack_webhook_url.get_secret_value() if settings.slack_webhook_url else None)
-            await reporter.send(end.date(), blocks, force=force, dry_run=dry_run)
+            sent = await reporter.send(end.date(), blocks, force=force, dry_run=dry_run)
+            log.info(
+                "slack_report_result",
+                status="sent" if sent else "dry_run" if dry_run else "already_sent",
+                report_date=end.date().isoformat(),
+                force=force,
+            )
         return blocks
     finally:
         await client.aclose()

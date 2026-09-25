@@ -204,19 +204,15 @@ UV_CACHE_DIR=/tmp/glean-ai-uv-cache uv run pytest tests/test_pipeline.py tests/t
 진행:
 
 1. Threads가 기본 활성화되고 필요한 Secret이 workflow에 전달되는 설정 테스트를 작성한다.
-2. `X_BEARER_TOKEN`과 `X_ENABLED`를 제거하고 참조가 남지 않았는지 확인한다.
-3. Reddit User-Agent와 Hugging Face/Threads 토큰을 예제 및 workflow에 반영한다.
-4. README의 지원 소스, 부분 실패 표시, 운영 준비와 알려진 제약을 갱신한다.
-5. 운영 로그에서 `source_failed`, `source_partial`, `source_empty`를 구분해 찾는 방법을 문서화한다.
+2. Reddit User-Agent와 Hugging Face/Threads 토큰을 예제 및 workflow에 반영한다.
+3. README의 지원 소스, 부분 실패 표시, 운영 준비와 알려진 제약을 갱신한다.
+4. 운영 로그에서 `source_failed`, `source_partial`, `source_empty`를 구분해 찾는 방법을 문서화한다.
 
 검증:
 
 ```bash
-rg -n "X_BEARER_TOKEN|X_ENABLED|x_bearer_token|x_enabled" . --glob '!.git/**'
 UV_CACHE_DIR=/tmp/glean-ai-uv-cache uv run pytest
 ```
-
-첫 명령은 결과가 없어야 한다.
 
 ## 작업 10: 전체 회귀 및 배포 전 검증
 

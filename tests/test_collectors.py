@@ -6,6 +6,7 @@ from glean_ai.collectors import (
     GitHubCollector,
     HuggingFaceCollector,
     RedditCollector,
+    RSSCollector,
 )
 from glean_ai.collectors.github import build_queries
 from glean_ai.config import Settings
@@ -181,3 +182,44 @@ async def test_reddit_uses_one_combined_daily_top_rss_request():
     assert listing.call_count == 1
     assert listing.calls[0].request.url.params["t"] == "day"
     assert listing.calls[0].request.headers["User-Agent"] == "glean-ai/0.1 (by /u/operator)"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_rss_collector_follows_redirects():
+    redirect = respx.get("https://example.com/feed").mock(
+        return_value=httpx.Response(
+            301, headers={"Location": "https://example.com/current-feed"}
+        )
+    )
+    feed = respx.get("https://example.com/current-feed").mock(
+        return_value=httpx.Response(200, text="""<rss><channel><item>
+          <title>Engineering update</title><link>https://example.com/post</link>
+          <pubDate>Fri, 25 Sep 2026 09:00:00 GMT</pubDate>
+        </item></channel></rss>""")
+    )
+    async with httpx.AsyncClient() as client:
+        collector = RSSCollector(client, "example", "Example", "https://example.com/feed")
+        result = await collector.collect({})
+
+    assert redirect.called
+    assert feed.called
+    assert [item.title for item in result] == ["Engineering update"]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_rss_collector_retries_rate_limited_response():
+    route = respx.get("https://example.com/feed").mock(side_effect=[
+        httpx.Response(429, headers={"Retry-After": "0"}),
+        httpx.Response(200, text="""<rss><channel><item>
+          <title>Engineering update</title><link>https://example.com/post</link>
+          <pubDate>Fri, 25 Sep 2026 09:00:00 GMT</pubDate>
+        </item></channel></rss>"""),
+    ])
+    async with httpx.AsyncClient() as client:
+        collector = RSSCollector(client, "example", "Example", "https://example.com/feed")
+        result = await collector.collect({})
+
+    assert route.call_count == 2
+    assert [item.title for item in result] == ["Engineering update"]

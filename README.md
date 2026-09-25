@@ -8,7 +8,6 @@ AI 뉴스와 국내 기술 블로그의 기술 글을 수집·정규화·분석�
 - 보고: 매일 08:00 Asia/Seoul, 한국어, Incoming Webhook, 최대 10건.
 - 후보 수집 상한: source당 100개. 기본 관심 목록과 RSS/Atom 피드는 `config/interests.yaml`에서 관리합니다.
 - GitHub, Hugging Face, Reddit은 기존 조건에 맞는 후보를 공통 점수순으로 정렬해 source당 1개만 저장합니다. Daily AI Thread의 14개 뉴스 피드와 카카오 테크, 네이버 D2, 토스 테크, 우아한형제들 기술블로그를 RSS/Atom으로 수집합니다.
-- X는 조회 비용이 발생해 운영 대상에서 제외하며 비공식 검색 우회도 사용하지 않습니다.
 - 초기 중복 처리는 canonical URL과 `SequenceMatcher` 문자열 유사도(0.88)를 사용합니다. 운영이 단순하지만 의미가 같은 다른 표현을 놓칠 수 있습니다.
 - GitHub Actions에는 영속 PostgreSQL `DATABASE_URL`이 필요합니다. Actions runner 자체 DB는 실행 간 보존되지 않습니다.
 
@@ -59,7 +58,7 @@ glean-ai backfill 2026-08-01 2026-08-02  # 기간 수집 진입점
 glean-ai health
 ```
 
-GitHub Actions의 기본 브랜치에 반영한 뒤 `Actions > daily-glean-ai > Run workflow`에서 수동 실행할 수 있습니다. 기본 `dry_run`은 미리 보기이며, 새 수집 결과를 DB에 저장하지 않고 Slack도 발송하지 않습니다. 대신 수집한 항목으로 만든 브리프를 Actions 로그에 출력합니다. 실제 저장·발송을 확인할 때만 입력에서 `dry_run`을 끄면 됩니다. 워크플로는 두 경우 모두 먼저 DB migration을 적용합니다. 실행에는 영속 PostgreSQL을 가리키는 `DATABASE_URL` secret이 필요합니다.
+GitHub Actions의 기본 브랜치에 반영한 뒤 `Actions > daily-glean-ai > Run workflow`에서 수동 실행할 수 있습니다. 기본 `dry_run`은 미리 보기이며, 새 수집 결과를 DB에 저장하지 않고 Slack도 발송하지 않습니다. 대신 수집한 항목으로 만든 브리프를 Actions 로그에 출력합니다. 실제 저장·발송을 확인할 때는 `dry_run`을 끄고, 오늘 이미 보낸 브리프도 다시 발송하려면 `force`를 켭니다. 워크플로는 두 경우 모두 먼저 DB migration을 적용합니다. 실행에는 영속 PostgreSQL을 가리키는 `DATABASE_URL` secret이 필요합니다.
 
 `config/interests.yaml`에서 키워드, subreddit, `ai_news_feeds`, `tech_blogs` 피드를 수정합니다. GitHub는 관심 키워드와 관련되고 stars가 10개 이상인 저장소, Hugging Face는 관심 키워드 또는 AI 작업 태그에 맞고 `trendingScore > 0`, 좋아요 50개 이상 또는 다운로드 5,000회 이상을 충족하는 모델을 후보로 삼습니다. Reddit은 공식 공개 RSS에서 최근 하루의 인기 게시물을 가져옵니다. 세 source 모두 후보를 기존 분류·점수화한 뒤 각 1개만 저장합니다. 뉴스 매체와 기술 블로그 피드는 해당 AI/기술 피드에 포함된 게시물을 수집하므로 기존 AI 키워드 일치 여부를 별도로 요구하지 않습니다. 피드에 공개된 제목·요약·작성자·날짜·원문 링크를 사용하고, 원문 전체는 별도 크롤링하지 않습니다. 피드마다 공개 글 수와 본문 길이가 다르며 MIT Technology Review 등 일부 매체의 원문은 구독이 필요할 수 있습니다. Hacker News 검색 피드는 hnrss.org 중계 서비스에 의존합니다. GitHub Actions에서는 저장소 기본 토큰과 코드에 정의한 Reddit User-Agent를 사용합니다.
 

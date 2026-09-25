@@ -7,7 +7,7 @@ import respx
 
 from glean_ai.reporters import SlackReporter, build_blocks
 from glean_ai.models import CollectionResult, CollectionStatus, Metrics, TopicSummary
-from glean_ai.storage import Store
+from glean_ai.storage import ReportRow, Store
 from glean_ai.summarizer import Summarizer
 
 
@@ -169,4 +169,7 @@ async def test_slack_dedup_and_dry_run(tmp_path):
         assert await reporter.send(day, [], dry_run=True) is False
         assert await reporter.send(day, []) is True
         assert await reporter.send(day, []) is False
-    assert route.call_count == 1
+        assert await reporter.send(day, [], force=True) is True
+    assert route.call_count == 2
+    with store.session() as session:
+        assert session.query(ReportRow).count() == 1

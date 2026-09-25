@@ -222,5 +222,14 @@ class SlackReporter:
         response = await self.client.post(self.webhook, json={"blocks": blocks})
         response.raise_for_status()
         with self.store.session() as session:
-            session.add(ReportRow(report_date=report_date.isoformat(), sent_at=datetime.now().astimezone()))
+            row = session.scalar(
+                select(ReportRow).where(ReportRow.report_date == report_date.isoformat())
+            )
+            if row:
+                row.sent_at = datetime.now().astimezone()
+            else:
+                session.add(ReportRow(
+                    report_date=report_date.isoformat(),
+                    sent_at=datetime.now().astimezone(),
+                ))
         return True
