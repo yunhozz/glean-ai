@@ -22,6 +22,8 @@ jobs:
           cache: pip
       - run: pip install .
       - run: alembic upgrade head
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
       - name: Collect and report
         run: |
           if [[ "${{ inputs.dry_run }}" == "true" ]]; then
