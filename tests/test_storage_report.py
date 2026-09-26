@@ -420,7 +420,7 @@ async def test_slack_sends_two_group_messages_with_all_21_source_sections(
     for source, source_name, group_name in platforms:
         message_text = str(messages[group_name])
         content, summary = next(row for row in rows if row[0].source == source)
-        assert message_text.count(f"*{source_name} · 1개 소식*") == 1
+        assert message_text.count(f"*{source_name}*") == 1
         assert f"<{content.url}|{summary.title_ko}>" in message_text
         assert summary.summary_ko in message_text
         assert summary.why_important in message_text

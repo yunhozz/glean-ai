@@ -62,8 +62,8 @@ def test_report_groups_sources_into_news_and_technology_messages(monkeypatch, tm
     messages = asyncio.run(cli._make_report(24, False, True, False))
 
     assert list(messages) == ["AI 뉴스", "AI 기술"]
-    assert "*News One · 0개 소식*" in str(messages["AI 뉴스"])
+    assert "*News One*" in str(messages["AI 뉴스"])
     assert all(
-        f"*{name} · 0개 소식*" in str(messages["AI 기술"])
+        f"*{name}*" in str(messages["AI 기술"])
         for name in ("Tech One", "GitHub", "Hugging Face", "Reddit")
     )

@@ -273,7 +273,7 @@ def _group_message(
                 "type": "header",
                 "text": {
                     "type": "plain_text",
-                    "text": f"{source_name} · {len(items)}개 소식",
+                    "text": source_name,
                 },
             })
             if not items:
