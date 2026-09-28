@@ -7,7 +7,7 @@ AI 뉴스와 국내 기술 블로그의 기술 글을 수집·정규화·분석�
 - 실행: Docker Compose, 배포: GitHub Actions cron, DB: PostgreSQL.
 - 보고: 매일 08:00 Asia/Seoul, 한국어, Incoming Webhook. AI 뉴스는 최대 28개, AI 기술은 최대 20개 항목을 보내며, 같은 소스에서는 최대 2개를 선택합니다.
 - 후보 수집 상한: source당 100개. 기본 관심 목록과 RSS/Atom 피드는 `config/interests.yaml`에서 관리합니다.
-- GitHub, Hugging Face, Reddit은 기존 조건에 맞는 후보를 모두 저장합니다. Daily AI Thread의 14개 뉴스 피드와 카카오 테크, 네이버 D2, 토스 테크, 우아한형제들 기술블로그를 RSS/Atom으로 수집합니다.
+- GitHub, Hugging Face, Reddit은 기존 조건에 맞는 후보를 모두 저장합니다. 뉴스 소스 12곳과 카카오 테크, 네이버 D2, 토스 테크, 우아한형제들 기술블로그, Google AI Blog, Google DeepMind Blog을 수집합니다.
 - 초기 중복 처리는 canonical URL과 `SequenceMatcher` 문자열 유사도(0.88)를 사용합니다. 운영이 단순하지만 의미가 같은 다른 표현을 놓칠 수 있습니다.
 - GitHub Actions에는 영속 PostgreSQL `DATABASE_URL`이 필요합니다. Actions runner 자체 DB는 실행 간 보존되지 않습니다.
 

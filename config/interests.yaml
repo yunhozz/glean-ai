@@ -46,12 +46,6 @@ ai_news_feeds:
   - id: mit_technology_review_ai
     name: MIT Technology Review AI
     url: https://www.technologyreview.com/topic/artificial-intelligence/feed/
-  - id: google_ai_blog
-    name: Google AI Blog
-    url: https://blog.google/technology/ai/rss/
-  - id: google_deepmind_blog
-    name: Google DeepMind Blog
-    url: https://deepmind.google/blog/rss.xml
   - id: marktechpost
     name: MarkTechPost
     url: https://www.marktechpost.com/feed/
@@ -68,3 +62,9 @@ tech_blogs:
   - id: woowahan_tech
     name: 우아한형제들 기술블로그
     url: https://techblog.woowahan.com/feed/
+  - id: google_ai_blog
+    name: Google AI Blog
+    url: https://blog.google/technology/ai/rss/
+  - id: google_deepmind_blog
+    name: Google DeepMind Blog
+    url: https://deepmind.google/blog/rss.xml
