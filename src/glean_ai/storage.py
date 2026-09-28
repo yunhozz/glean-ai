@@ -104,7 +104,7 @@ class Store:
                 data["metrics"] = content.metrics.model_dump()
                 row = existing.get(content.external_id)
                 if row:
-                    if content.source == "huggingface":
+                    if content.source in {"huggingface", "hacker_news_ai"}:
                         for name, value in data.items():
                             setattr(row, name, value)
                     continue

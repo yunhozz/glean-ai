@@ -5,7 +5,13 @@ from datetime import datetime, timedelta, timezone
 import httpx
 import structlog
 
-from .collectors import GitHubCollector, HuggingFaceCollector, RedditCollector, RSSCollector
+from .collectors import (
+    GitHubCollector,
+    HackerNewsCollector,
+    HuggingFaceCollector,
+    RedditCollector,
+    RSSCollector,
+)
 from .collectors.base import CollectorError
 from .config import Settings
 from .models import CollectionResult, CollectionStatus, Content
@@ -37,7 +43,7 @@ class DailyService:
             self.settings.huggingface_token.get_secret_value()
             if self.settings.huggingface_token else None
         )
-        collectors = {
+        collectors: dict[str, object] = {
             "github": GitHubCollector(
                 self.client, self.settings.source_limit, token=github_token
             ),
@@ -51,13 +57,18 @@ class DailyService:
             ),
         }
         for feed in self.settings.rss_feeds():
-            collectors[feed["id"]] = RSSCollector(
-                self.client,
-                feed["id"],
-                feed["name"],
-                feed["url"],
-                self.settings.source_limit,
-            )
+            if feed["id"] == HackerNewsCollector.source:
+                collectors[feed["id"]] = HackerNewsCollector(
+                    self.client, self.settings.source_limit
+                )
+            else:
+                collectors[feed["id"]] = RSSCollector(
+                    self.client,
+                    feed["id"],
+                    feed["name"],
+                    feed["url"],
+                    self.settings.source_limit,
+                )
         return collectors
 
     async def collect(
@@ -101,7 +112,9 @@ class DailyService:
                 process,
                 contents,
                 interests.get("keywords", []),
-                include_unmatched=isinstance(collector, RSSCollector),
+                include_unmatched=isinstance(
+                    collector, (RSSCollector, HackerNewsCollector)
+                ),
             )
             partial_errors = collector.partial_errors  # type: ignore[attr-defined]
             status = (

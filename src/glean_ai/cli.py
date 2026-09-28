@@ -9,7 +9,7 @@ import typer
 
 from .config import get_settings
 from .models import CollectionResult, Content, TopicSummary
-from .pipeline import canonical_url, select_report_items
+from .pipeline import canonical_url, rank_ai_news, select_report_items
 from .reporters import SlackReporter, build_messages
 from .service import DailyService, configure_logging
 from .storage import Store
@@ -93,12 +93,27 @@ async def _make_report(
             group_sources = [
                 source for source, _, group in platforms if group == group_name
             ]
-            selected_items.extend(select_report_items(
-                [item for item in items if source_groups[item.source] == group_name],
-                limit=20,
+            group_items = [
+                item for item in items if source_groups[item.source] == group_name
+            ]
+            if group_name == "AI 뉴스":
+                group_items = rank_ai_news(group_items)
+            group_selected = select_report_items(
+                group_items,
+                limit=28 if group_name == "AI 뉴스" else 20,
                 preferred_sources=group_sources,
                 max_per_source=2,
-            ))
+            )
+            selected_items.extend(group_selected)
+            if group_name == "AI 뉴스":
+                for item in group_selected:
+                    log.info(
+                        "news_item_selected",
+                        source=item.source,
+                        title=item.title,
+                        rank=item.final_score,
+                        evidence=item.raw_metadata.get("news_rank_evidence", {}),
+                    )
         items = sorted(selected_items, key=lambda item: item.final_score, reverse=True)
         summarizer = Summarizer(client, settings.llm_api_key.get_secret_value() if settings.llm_api_key else None, settings.llm_base_url, settings.llm_model)
         semaphore = asyncio.Semaphore(10)

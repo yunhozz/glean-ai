@@ -4,6 +4,7 @@ import re
 from collections import Counter
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
+from itertools import combinations
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from .models import Content
@@ -25,6 +26,26 @@ CATEGORY_RULES = {
     "디자인/디자인 도구": ("design tool", "figma", "디자인 도구"),
     "디자인/UX 패턴": ("ux", "interaction", "사용자 경험"),
     "디자인/브랜드·콘텐츠": ("brand", "content creation", "브랜드"),
+}
+
+NEWS_ACTION_TERMS = (
+    "announce", "debut", "introduc", "launch", "open source", "publish", "releas",
+    "roll out", "ship", "unveil", "공개", "발표", "출시", "배포", "도입",
+)
+NEWS_IMPACT_GROUPS = (
+    ("acqui", "funding", "invest", "partnership", "revenue", "인수", "투자", "협력"),
+    ("ban", "copyright", "law", "lawsuit", "policy", "regulat", "규제", "법안", "소송"),
+    ("breach", "risk", "safety", "security", "vulnerab", "보안", "안전", "취약"),
+    ("benchmark", "research", "study", "reasoning", "연구", "성능", "벤치마크"),
+    ("agent", "api", "chip", "model", "product", "모델", "서비스", "에이전트"),
+)
+NEWS_ROUNDUP_TERMS = (
+    "opinion", "podcast", "roundup", "this week", "weekly", "칼럼", "주간", "정리",
+)
+NEWS_TOPIC_STOPWORDS = {
+    "about", "after", "again", "against", "also", "and", "artificial", "from", "into",
+    "intelligence", "new", "news", "over", "says", "that", "the", "their", "this", "with",
+    "공개", "관련", "대한", "발표", "인공", "지능", "출시",
 }
 
 
@@ -103,6 +124,106 @@ def process(
         item for item in relevant
         if include_unmatched or item.matched_keywords or item.categories
     ])
+
+
+def _news_topic_tokens(item: Content) -> set[str]:
+    return {
+        token for token in re.findall(r"[a-z0-9가-힣]+", item.title.lower())
+        if len(token) >= 2 and token not in NEWS_TOPIC_STOPWORDS
+    }
+
+
+def _has_news_term(text: str, terms: tuple[str, ...]) -> bool:
+    return any(re.search(rf"\b{re.escape(term)}", text) for term in terms)
+
+
+def _news_coverage(items: list[Content]) -> dict[int, int]:
+    sources = {id(item): {item.source} for item in items}
+    tokens = {id(item): _news_topic_tokens(item) for item in items}
+    for left, right in combinations(items, 2):
+        if left.source == right.source:
+            continue
+        left_tokens, right_tokens = tokens[id(left)], tokens[id(right)]
+        shared = left_tokens & right_tokens
+        smaller = min(len(left_tokens), len(right_tokens))
+        if len(shared) < 2 or not smaller or len(shared) / smaller < 0.5:
+            continue
+        sources[id(left)].add(right.source)
+        sources[id(right)].add(left.source)
+    return {item_id: len(source_set) for item_id, source_set in sources.items()}
+
+
+def rank_ai_news(items: list[Content]) -> list[Content]:
+    """Rank 24-hour news by observable attention and editorial significance."""
+    coverage = _news_coverage(items)
+    for item in items:
+        text = normalized_text(item)
+        title = item.title.lower()
+        action_signal = _has_news_term(text, NEWS_ACTION_TERMS)
+        roundup_signal = _has_news_term(title, NEWS_ROUNDUP_TERMS)
+        date_basis = item.raw_metadata.get("date_basis", "published")
+
+        novelty = 60.0 if date_basis == "published" else 30.0
+        novelty += 35 if action_signal else 0
+        novelty -= 40 if roundup_signal else 0
+        novelty = max(0.0, min(100.0, novelty))
+
+        impact_groups = sum(
+            _has_news_term(text, terms) for terms in NEWS_IMPACT_GROUPS
+        )
+        impact = min(100.0, impact_groups * 25.0 + (20 if action_signal else 0))
+
+        evidence = 20.0 if item.author else 0.0
+        evidence += 30 if len(item.body) >= 160 else 0
+        evidence += 20 if len(item.body) >= 500 else 0
+        evidence += 15 if re.search(r"\d", item.title) else 0
+        evidence += 15 if date_basis == "published" else 0
+        evidence = min(100.0, evidence)
+
+        coverage_count = coverage[id(item)]
+        coverage_score = min(100.0, max(0, coverage_count - 1) * 50.0)
+        feed_position = item.raw_metadata.get("feed_position")
+        editorial = (
+            max(0.0, 100.0 - (feed_position - 1) * 10.0)
+            if isinstance(feed_position, int) and not isinstance(feed_position, bool)
+            else 0.0
+        )
+        importance = (
+            novelty * 0.30
+            + impact * 0.30
+            + evidence * 0.20
+            + coverage_score * 0.15
+            + editorial * 0.05
+        )
+        has_native_popularity = (
+            item.raw_metadata.get("native_popularity_period") == "24h"
+        )
+        news_rank = (
+            item.trend_score * 0.65 + importance * 0.35
+            if has_native_popularity else importance
+        )
+        item.final_score = round(news_rank, 2)
+        item.score_reasons.update({
+            "news_novelty": novelty,
+            "news_impact": impact,
+            "news_evidence": evidence,
+            "news_coverage": coverage_score,
+            "news_editorial": editorial,
+            "news_rank": item.final_score,
+        })
+        item.raw_metadata["news_rank_evidence"] = {
+            "cross_source_count": coverage_count,
+            "date_basis": date_basis,
+            "feed_position": feed_position,
+            "native_popularity_24h": has_native_popularity,
+            "published_at": item.published_at.isoformat(),
+        }
+
+    return sorted(
+        items,
+        key=lambda item: (item.final_score, item.published_at),
+        reverse=True,
+    )
 
 
 def select_report_items(

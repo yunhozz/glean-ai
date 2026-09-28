@@ -5,6 +5,7 @@ from email.utils import parsedate_to_datetime
 from xml.etree import ElementTree
 
 import httpx
+from pydantic import HttpUrl
 
 from ..models import Content
 from .base import Collector, CollectorError
@@ -75,7 +76,7 @@ class RSSCollector(Collector):
 
         entries = root.findall(f".//{ATOM}entry") or root.findall(".//item")
         output = []
-        for entry in entries:
+        for feed_position, entry in enumerate(entries, start=1):
             title = _text(entry, f"{ATOM}title", "title")
             if not title:
                 continue
@@ -90,10 +91,12 @@ class RSSCollector(Collector):
             )
             link = link or _text(entry, "link")
             published = _text(
-                entry,
-                f"{ATOM}published", f"{ATOM}updated", "pubDate", "published", "updated",
-                f"{DC}date",
+                entry, f"{ATOM}published", "pubDate", "published", f"{DC}date"
             )
+            date_basis = "published"
+            if not published:
+                published = _text(entry, f"{ATOM}updated", "updated")
+                date_basis = "updated"
             if not link or not published:
                 continue
             try:
@@ -119,8 +122,12 @@ class RSSCollector(Collector):
                 author=author,
                 title=_clean_markup(title),
                 body=_clean_markup(body)[:4000],
-                url=link,
+                url=HttpUrl(link),
                 published_at=published_at,
-                raw_metadata={"publisher": self.name},
+                raw_metadata={
+                    "publisher": self.name,
+                    "feed_position": feed_position,
+                    "date_basis": date_basis,
+                },
             ))
         return output

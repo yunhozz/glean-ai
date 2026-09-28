@@ -27,7 +27,7 @@ ai_news_feeds:
     url: https://www.theverge.com/rss/ai-artificial-intelligence/index.xml
   - id: hacker_news_ai
     name: Hacker News (AI)
-    url: https://hnrss.org/newest?q=AI
+    url: https://hn.algolia.com/api/v1/search_by_date
   - id: wired_ai
     name: Wired AI
     url: https://www.wired.com/feed/tag/ai/latest/rss

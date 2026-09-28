@@ -130,7 +130,7 @@ def test_blocks_show_every_item_in_highlighted_format(sample):
     blocks = build_blocks(rows, now - timedelta(days=1), now)
     text = str(blocks)
 
-    assert "🔥 오늘의 주목할 소식" in text
+    assert "🔥 오늘의 주목할 소식" not in text
     assert "📌 함께 볼 소식" not in text
     assert all(f"상세 요약 {index}" in text for index in range(5))
     assert all(f"실무 내용 {index}" in text for index in range(5))

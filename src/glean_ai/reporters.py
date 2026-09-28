@@ -50,6 +50,11 @@ def _metric_text(content: Content) -> str:
             f"⭐ {content.metrics.stars:,} · "
             f"Fork {content.metrics.forks:,}"
         )
+    if content.source == "hacker_news_ai":
+        return (
+            f"▲ {content.metrics.likes:,} points · "
+            f"댓글 {content.metrics.comments:,}"
+        )
     if content.source == "reddit":
         rank = content.raw_metadata.get("daily_rank")
         if isinstance(rank, int) and rank > 0:
@@ -132,10 +137,6 @@ def _group_shell(
                 "type": "mrkdwn",
                 "text": f"{end:%Y-%m-%d} · {row_count}개 소식",
             }],
-        },
-        {
-            "type": "section",
-            "text": {"type": "mrkdwn", "text": "*🔥 오늘의 주목할 소식*"},
         },
     ]
     suffix = _collection_blocks(collection_results)
@@ -479,12 +480,12 @@ class SlackReporter:
                     retry_after = 1
                 await asyncio.sleep(max(retry_after, 1))
             with self.store.session() as session:
-                row = session.scalar(select(ReportDeliveryRow).where(
+                delivery_row = session.scalar(select(ReportDeliveryRow).where(
                     ReportDeliveryRow.report_date == report_day,
                     ReportDeliveryRow.source == source,
                 ))
-                if row:
-                    row.sent_at = datetime.now().astimezone()
+                if delivery_row:
+                    delivery_row.sent_at = datetime.now().astimezone()
                 else:
                     session.add(ReportDeliveryRow(
                         report_date=report_day,
@@ -493,11 +494,11 @@ class SlackReporter:
                     ))
             message_index += 1
         with self.store.session() as session:
-            row = session.scalar(
+            report_row = session.scalar(
                 select(ReportRow).where(ReportRow.report_date == report_day)
             )
-            if row:
-                row.sent_at = datetime.now().astimezone()
+            if report_row:
+                report_row.sent_at = datetime.now().astimezone()
             else:
                 session.add(ReportRow(
                     report_date=report_day,
