@@ -119,3 +119,26 @@ async def test_tech_blog_storage_does_not_block_network_loop(tmp_path):
     assert all(thread_id != event_loop_thread for thread_id in store.upsert_threads)
     with store.session() as session:
         assert session.query(RunRow).count() == 6
+
+
+@pytest.mark.asyncio
+async def test_reddit_top_two_survive_keyword_filter(tmp_path, sample):
+    config = tmp_path / "interests.yaml"
+    config.write_text("keywords: [unmatched]\nai_news_feeds: []\ntech_blogs: []\n")
+    settings = Settings(interest_config_path=config)
+    store = Store(f"sqlite:///{tmp_path / 'reddit.db'}")
+    store.create_all()
+    item = sample.model_copy(deep=True)
+    item.source, item.title, item.body = "reddit", "Landscapes", "Mountains"
+    item.raw_metadata = {"daily_rank": 1}
+
+    class Collector:
+        partial_errors = []
+        async def collect(self, interests):
+            return [item]
+
+    async with httpx.AsyncClient() as client:
+        _, result = await DailyService(settings, store, client)._collect_one(
+            "reddit", Collector(), {"keywords": ["unmatched"]}, True, False
+        )
+    assert [content.external_id for content in result.contents] == [item.external_id]

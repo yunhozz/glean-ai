@@ -223,3 +223,22 @@ async def test_rss_collector_retries_rate_limited_response():
 
     assert route.call_count == 2
     assert [item.title for item in result] == ["Engineering update"]
+
+
+@pytest.mark.asyncio
+@respx.mock
+@pytest.mark.parametrize("invalid_first", [False, True])
+async def test_reddit_collects_only_original_top_two(invalid_first):
+    entries = "".join(
+        f'<entry><id>p{rank}</id><title>Landscape {rank}</title>'
+        + ("" if invalid_first and rank == 1 else '<published>2026-10-05T00:00:00Z</published>')
+        + f'<link href="https://www.reddit.com/r/artificial/comments/p{rank}/" /></entry>'
+        for rank in range(1, 5)
+    )
+    route = respx.get("https://www.reddit.com/r/artificial+MachineLearning/top/.rss?t=day").mock(
+        return_value=httpx.Response(200, text=f'<feed xmlns="http://www.w3.org/2005/Atom">{entries}</feed>')
+    )
+    async with httpx.AsyncClient() as client:
+        items = await RedditCollector(client).collect({"subreddits": ["artificial", "MachineLearning"]})
+    assert [item.raw_metadata["daily_rank"] for item in items] == ([2] if invalid_first else [1, 2])
+    assert route.call_count == 1

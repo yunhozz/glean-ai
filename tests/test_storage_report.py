@@ -441,3 +441,40 @@ async def test_slack_sends_two_group_messages_with_all_21_source_sections(
         "🤖 AI 뉴스",
         "🤖 AI 기술",
     ]
+
+
+def test_reddit_recollection_updates_current_data(tmp_path, sample):
+    store = Store(f"sqlite:///{tmp_path / 'reddit.db'}")
+    store.create_all()
+    original = sample.model_copy(deep=True)
+    original.source = "reddit"
+    original.raw_metadata = {"daily_rank": 2}
+    store.upsert(original)
+    current = original.model_copy(deep=True)
+    current.title, current.body = "Current title", "Current body"
+    current.raw_metadata = {"daily_rank": 1}
+    current.final_score = 91
+    current.collected_at = original.collected_at + timedelta(hours=1)
+    assert store.upsert_many([current]) == 0
+    rows = store.recent(datetime.now(timezone.utc) - timedelta(days=1))
+    assert len(rows) == 1
+    assert (rows[0].title, rows[0].body, rows[0].raw_metadata, rows[0].final_score) == (
+        current.title, current.body, current.raw_metadata, current.final_score
+    )
+    assert rows[0].collected_at.replace(tzinfo=timezone.utc) == current.collected_at
+
+
+def test_latest_blog_posts_use_publication_order(tmp_path, sample):
+    store = Store(f"sqlite:///{tmp_path / 'blog.db'}")
+    store.create_all()
+    now = datetime.now(timezone.utc)
+    for index, age in enumerate([3, 1, 1, 2]):
+        item = sample.model_copy(deep=True)
+        item.source, item.external_id = "tech_one", str(index)
+        item.published_at = now - timedelta(days=age)
+        item.collected_at = now - timedelta(days=10 - index)
+        item.final_score = index * 20
+        store.upsert(item)
+    rows = store.latest_for_source("tech_one")
+    assert [row.external_id for row in rows] == ["1", "2"]
+    assert store.latest_for_source("missing") == []
