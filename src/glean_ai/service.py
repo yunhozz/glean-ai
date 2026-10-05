@@ -16,7 +16,7 @@ from .collectors.base import CollectorError
 from .config import Settings
 from .models import CollectionResult, CollectionStatus, Content
 from .pipeline import process
-from .storage import RunRow, Store
+from .storage import ContentRow, RunRow, Store
 
 log = structlog.get_logger()
 
@@ -112,7 +112,7 @@ class DailyService:
                 process,
                 contents,
                 interests.get("keywords", []),
-                include_unmatched=isinstance(
+                include_unmatched=name == "reddit" or isinstance(
                     collector, (RSSCollector, HackerNewsCollector)
                 ),
             )
@@ -201,6 +201,13 @@ class DailyService:
         rows = self.store.recent(
             datetime.now(timezone.utc) - timedelta(hours=hours), tech_blog_sources
         )
+        return self._contents_from_rows(rows)
+
+    def latest_for_source(self, source: str, limit: int = 2) -> list[Content]:
+        return self._contents_from_rows(self.store.latest_for_source(source, limit))
+
+    @staticmethod
+    def _contents_from_rows(rows: list[ContentRow]) -> list[Content]:
         items = []
         for row in rows:
             data = {

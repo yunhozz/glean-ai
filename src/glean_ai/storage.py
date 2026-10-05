@@ -104,7 +104,7 @@ class Store:
                 data["metrics"] = content.metrics.model_dump()
                 row = existing.get(content.external_id)
                 if row:
-                    if content.source in {"huggingface", "hacker_news_ai"}:
+                    if content.source in {"huggingface", "hacker_news_ai", "reddit"}:
                         for name, value in data.items():
                             setattr(row, name, value)
                     continue
@@ -124,3 +124,11 @@ class Store:
                     and_(ContentRow.source.in_(tech_blog_sources), ContentRow.collected_at >= since),
                 )
             ).order_by(ContentRow.final_score.desc())).all())
+
+    def latest_for_source(self, source: str, limit: int = 2) -> list[ContentRow]:
+        with self.session() as session:
+            return list(session.scalars(select(ContentRow).where(
+                ContentRow.source == source
+            ).order_by(
+                ContentRow.published_at.desc(), ContentRow.external_id.asc()
+            ).limit(max(0, limit))).all())

@@ -82,3 +82,54 @@ def test_report_selection_includes_each_healthy_source(sample):
     assert {item.source for item in selected} == {
         "github", "reddit", "huggingface", "kakao_tech",
     }
+
+
+def technology_items(sample, sources, count=7):
+    items = []
+    for source in sources:
+        for index in range(count):
+            item = sample.model_copy(deep=True)
+            item.source, item.external_id = source, f"{source}-{index}"
+            item.final_score = 100 - index
+            item.published_at -= timedelta(days=count - index)
+            item.raw_metadata = {"daily_rank": index + 1} if source == "reddit" else {}
+            items.append(item)
+    return items
+
+
+def test_technology_source_limits(sample):
+    from glean_ai import pipeline
+    blogs = [f"blog-{index}" for index in range(6)]
+    items = technology_items(sample, [*blogs, "github", "huggingface", "reddit"])
+    selected = pipeline.select_technology_report_items(items, blogs)
+    assert len(selected) == 24
+    assert {source: sum(item.source == source for item in selected) for source in blogs} == dict.fromkeys(blogs, 2)
+    assert sum(item.source == "github" for item in selected) == 5
+    assert sum(item.source == "huggingface" for item in selected) == 5
+    assert [item.raw_metadata["daily_rank"] for item in selected if item.source == "reddit"] == [1, 2]
+    assert len(pipeline.select_technology_report_items(items, blogs, limit=10)) == 10
+    assert pipeline.select_technology_report_items(items, blogs, limit=0) == []
+
+
+def test_technology_uses_available_candidates(sample):
+    from glean_ai import pipeline
+    items = technology_items(sample, ["blog", "github", "huggingface", "reddit"], count=1)
+    assert len(pipeline.select_technology_report_items(items, ["blog"])) == 4
+
+
+def test_technology_fallback_preserves_latest_order(sample):
+    from glean_ai import pipeline
+    items = technology_items(sample, ["fallback", "primary", "reddit"], count=3)
+    items[-2].final_score = 200
+    selected = pipeline.select_technology_report_items(items, ["fallback", "primary"], {"fallback"})
+    assert [item.external_id for item in selected if item.source == "fallback"] == ["fallback-2", "fallback-1"]
+    assert [item.external_id for item in selected if item.source == "primary"] == ["primary-0", "primary-1"]
+    assert [item.raw_metadata["daily_rank"] for item in selected if item.source == "reddit"] == [1, 2]
+
+
+def test_news_selection_is_unchanged(sample):
+    items = technology_items(sample, [f"news-{index}" for index in range(15)], count=4)
+    selected = select_report_items(items, 28, [f"news-{index}" for index in range(15)], 2)
+    assert len(selected) == 28
+    assert all(sum(item.source == source for item in selected) <= 2 for source in {item.source for item in items})
+    assert [item.final_score for item in selected] == sorted([item.final_score for item in selected], reverse=True)

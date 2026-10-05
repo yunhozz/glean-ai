@@ -8,8 +8,8 @@ import structlog
 import typer
 
 from .config import get_settings
-from .models import CollectionResult, Content, TopicSummary
-from .pipeline import canonical_url, rank_ai_news, select_report_items
+from .models import CollectionResult, CollectionStatus, Content, TopicSummary
+from .pipeline import canonical_url, rank_ai_news, select_report_items, select_technology_report_items
 from .reporters import SlackReporter, build_messages
 from .service import DailyService, configure_logging
 from .storage import Store
@@ -75,17 +75,35 @@ async def _make_report(
         recent_items = [
             item for item in service.recent(hours) if item.source in source_ids
         ]
-        if dry_run and collection_results:
-            known_ids = {(item.source, item.external_id) for item in recent_items}
-            known_urls = {canonical_url(str(item.url)) for item in recent_items}
-            recent_items.extend(
-                item
-                for result in collection_results.values()
-                for item in result.contents
-                if item.source in source_ids
-                if (item.source, item.external_id) not in known_ids
-                and canonical_url(str(item.url)) not in known_urls
-            )
+        if collection_results:
+            reddit_result = collection_results.get("reddit")
+            if reddit_result and reddit_result.status in {
+                CollectionStatus.SUCCESS, CollectionStatus.PARTIAL, CollectionStatus.EMPTY,
+            }:
+                recent_items = [item for item in recent_items if item.source != "reddit"]
+                recent_items.extend(reddit_result.contents)
+            if dry_run:
+                current_items = [
+                    item for result in collection_results.values()
+                    for item in result.contents
+                    if item.source in source_ids and item.source != "reddit"
+                ]
+                current_ids = {(item.source, item.external_id) for item in current_items}
+                recent_items = [
+                    item for item in recent_items
+                    if (item.source, item.external_id) not in current_ids
+                ]
+                known_urls = {canonical_url(str(item.url)) for item in recent_items}
+                recent_items.extend(
+                    item for item in current_items
+                    if canonical_url(str(item.url)) not in known_urls
+                )
+        fallback_sources: set[str] = set()
+        for source, _, group in platforms:
+            if group == "AI 기술" and source not in {"github", "huggingface", "reddit"}:
+                if not any(item.source == source for item in recent_items):
+                    fallback_sources.add(source)
+                    recent_items.extend(service.latest_for_source(source, 2))
         items = sorted(recent_items, key=lambda item: item.final_score, reverse=True)
         source_groups = {source: group for source, _, group in platforms}
         selected_items: list[Content] = []
@@ -98,12 +116,15 @@ async def _make_report(
             ]
             if group_name == "AI 뉴스":
                 group_items = rank_ai_news(group_items)
-            group_selected = select_report_items(
-                group_items,
-                limit=28 if group_name == "AI 뉴스" else 20,
-                preferred_sources=group_sources,
-                max_per_source=2,
-            )
+                group_selected = select_report_items(
+                    group_items, limit=28, preferred_sources=group_sources, max_per_source=2,
+                )
+            else:
+                group_selected = select_technology_report_items(
+                    group_items,
+                    [source for source in group_sources if source not in {"github", "huggingface", "reddit"}],
+                    fallback_sources,
+                )
             selected_items.extend(group_selected)
             if group_name == "AI 뉴스":
                 for item in group_selected:
@@ -114,7 +135,7 @@ async def _make_report(
                         rank=item.final_score,
                         evidence=item.raw_metadata.get("news_rank_evidence", {}),
                     )
-        items = sorted(selected_items, key=lambda item: item.final_score, reverse=True)
+        items = selected_items
         summarizer = Summarizer(client, settings.llm_api_key.get_secret_value() if settings.llm_api_key else None, settings.llm_base_url, settings.llm_model)
         semaphore = asyncio.Semaphore(10)
 
