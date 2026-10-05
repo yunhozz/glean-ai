@@ -1,103 +1,76 @@
-# glean-ai
+# 🌾 glean-ai
 
-AI 뉴스와 국내 기술 블로그의 기술 글을 수집·정규화·분석하고 매일 한국어 Slack 브리프를 전송하는 최소 운영 파이프라인입니다.
+AI 뉴스와 기술 글을 수집·분석해 매일 한국어 Slack 브리프로 전하는 파이프라인입니다. GitHub, Hugging Face, Reddit, AI 뉴스 피드, 국내외 기술 블로그를 한곳에서 살펴볼 수 있습니다.
 
-## 가정과 현재 범위
+## 핵심 기능과 흐름
 
-- 실행: Docker Compose, 배포: GitHub Actions cron, DB: PostgreSQL.
-- 보고: 매일 08:00 Asia/Seoul, 한국어, Incoming Webhook. AI 뉴스는 최대 28개, AI 기술은 최대 24개 항목을 보냅니다. AI 뉴스와 기술 블로그는 소스별 최대 2개, GitHub와 Hugging Face는 각각 최대 5개, Reddit은 최대 2개를 선택합니다.
-- 후보 수집 상한: source당 100개. 기본 관심 목록과 RSS/Atom 피드는 `config/interests.yaml`에서 관리합니다.
-- GitHub와 Hugging Face는 기존 조건에 맞는 후보를 모두 저장하며, Reddit은 설정 subreddit을 합친 하루 인기 원래 1·2위만 수집합니다. 뉴스 소스 12곳과 카카오 테크, 네이버 D2, 토스 테크, 우아한형제들 기술블로그, Google AI Blog, Google DeepMind Blog을 수집합니다.
-- 초기 중복 처리는 canonical URL과 `SequenceMatcher` 문자열 유사도(0.88)를 사용합니다. 운영이 단순하지만 의미가 같은 다른 표현을 놓칠 수 있습니다.
-- GitHub Actions에는 영속 PostgreSQL `DATABASE_URL`이 필요합니다. Actions runner 자체 DB는 실행 간 보존되지 않습니다.
-
-## 구조와 데이터 흐름
+- 관심 키워드와 피드를 바탕으로 수집하고, 중복 제거·분류·점수화를 거쳐 PostgreSQL에 저장합니다.
+- LLM으로 한국어 제목과 요약을 만들고, `AI 뉴스` 최대 28개와 `AI 기술` 최대 24개를 소스별로 묶어 Slack Incoming Webhook으로 보냅니다.
+- 일부 소스가 실패해도 나머지 결과로 브리프를 만들며, `daily` 결과에는 수집 상태를 표시합니다.
+- 설정된 시간대의 같은 날짜에는 한 번만 전송합니다. 중간 전송 실패 후 재실행하면 이미 보낸 메시지 그룹은 건너뜁니다.
 
 ```mermaid
 flowchart LR
-  A[GitHub / Hugging Face / Reddit / 뉴스 14개 피드 / 국내 기술 블로그 RSS·Atom] --> B[Source adapters]
-  B --> C[정규화]
-  C --> D[중복 제거 · 분류 · 점수화]
-  D --> E[(PostgreSQL)]
-  E --> F[LLM JSON 요약]
-  F -->|실패| G[규칙 기반 fallback]
-  F --> H[Slack Block Kit]
-  G --> H
-  H --> I[Preview / Incoming Webhook]
+  A[뉴스·기술 소스] --> B[수집·정규화]
+  B --> C[중복 제거·분류·점수화]
+  C --> D[(PostgreSQL)]
+  D --> E[한국어 요약]
+  E --> F[미리보기 / Slack]
 ```
 
-모든 시각은 DB에 UTC로 저장하고 보고 시 `Asia/Seoul`로 변환합니다. `source + external_id` unique 제약과 날짜별 보고 이력으로 재실행 중복을 막습니다. 일부 source가 실패해도 나머지는 전송하며 Slack 상단에 실패 상태를 표시합니다.
+## 🚀 로컬 빠른 실행
 
-## 로컬 실행
-
-Python 3.12가 필요합니다.
+Docker Compose가 필요합니다. 앱 컨테이너는 Python 3.12를 사용하며, PostgreSQL은 Compose 내부에서 연결합니다.
 
 ```bash
 cp .env.example .env
+# .env에 필요한 API 키와 Slack Webhook을 설정합니다.
 docker compose up -d db
-python -m venv .venv
-. .venv/bin/activate
-pip install -e '.[dev]'
-alembic upgrade head
-glean-ai collect
-glean-ai preview
-glean-ai report --dry-run
+docker compose build app
+docker compose run --rm --volume "$PWD/.env:/app/.env:ro" --entrypoint alembic app upgrade head
+docker compose run --rm --volume "$PWD/.env:/app/.env:ro" app daily --dry-run
 ```
 
-전체 명령:
+마지막 명령은 수집 결과와 Slack JSON을 출력하며 새 수집 결과·실행 이력·전송 이력을 저장하거나 Slack에 발송하지 않습니다. 기존 DB를 조회하므로 migration이 필요하고, 외부 소스 수집과 설정된 LLM 호출은 수행합니다. 실제 저장·발송은 같은 명령에서 `--dry-run`을 제거합니다.
+
+Compose는 앱의 `DATABASE_URL`을 내부 DB 주소로 지정하고, DB 비밀번호는 `POSTGRES_PASSWORD`(미설정 시 Compose 기본값)를 사용합니다. 호스트에서 Python으로 직접 실행하려면 Python 3.12 이상과 접근 가능한 PostgreSQL을 준비하고 `.env`의 `DATABASE_URL`을 맞춰야 합니다. 기본 Compose DB는 호스트 포트를 공개하지 않습니다.
+
+## 주요 명령
+
+컨테이너에서는 위 예시의 `app` 뒤에 명령을 넣습니다. 호스트에 `pip install -e '.[dev]'`로 설치했다면 다음처럼 실행합니다.
 
 ```bash
-glean-ai collect                         # 전체 수집
-glean-ai collect --source github         # 단일 source
-glean-ai analyze --hours 24              # 최근 데이터 분석
-glean-ai preview --hours 24              # Slack JSON 미리보기
-glean-ai report                           # 전송
-glean-ai report --force                   # 같은 날짜 재전송
-glean-ai daily --dry-run                  # 수집+보고, 외부 전송/DB 기록 없음
-glean-ai backfill 2026-08-01 2026-08-02  # 기간 수집 진입점
-glean-ai health
+glean-ai collect                    # 전체 수집 및 저장
+glean-ai collect --source github    # 단일 소스 수집
+glean-ai analyze --hours 24         # 최근 데이터 확인
+glean-ai preview --hours 24         # 저장된 데이터로 Slack JSON 미리보기
+glean-ai report --dry-run           # 저장된 데이터로 보고 미리보기
+glean-ai report                     # Slack 발송
+glean-ai report --force             # 같은 날짜 재발송
+glean-ai daily                      # 수집·저장·보고
+glean-ai daily --dry-run            # 수집·보고 미리보기
+glean-ai health                     # DB 연결 및 테이블 준비 확인
 ```
 
-GitHub Actions의 기본 브랜치에 반영한 뒤 `Actions > daily-glean-ai > Run workflow`에서 수동 실행할 수 있습니다. 기본 `dry_run`은 미리 보기이며, 새 수집 결과를 DB에 저장하지 않고 Slack도 발송하지 않습니다. 대신 수집한 항목으로 만든 브리프를 Actions 로그에 출력합니다. 실제 저장·발송을 확인할 때는 `dry_run`을 끄고, 오늘 이미 보낸 브리프도 다시 발송하려면 `force`를 켭니다. 워크플로는 두 경우 모두 먼저 DB migration을 적용합니다. 실행에는 영속 PostgreSQL을 가리키는 `DATABASE_URL` secret이 필요합니다.
+## ⚙️ 설정과 스케줄
 
-`config/interests.yaml`에서 키워드, subreddit, `ai_news_feeds`, `tech_blogs` 피드를 수정합니다. GitHub는 관심 키워드와 관련되고 stars가 10개 이상인 저장소, Hugging Face는 관심 키워드 또는 AI 작업 태그에 맞고 `trendingScore > 0`, 좋아요 50개 이상 또는 다운로드 5,000회 이상을 충족하는 모델을 후보로 삼습니다. Reddit은 설정 subreddit을 합친 공식 공개 `top/.rss?t=day` 응답의 원래 1·2위만 가져옵니다. 1위가 파싱되지 않아도 3위를 승격하지 않으며, 1·2위에는 일반 키워드 필터를 적용하지 않습니다. 세 source 모두 조건을 통과한 후보를 저장하고 보고서에 포함합니다. 뉴스 매체와 기술 블로그 피드는 해당 AI/기술 피드에 포함된 게시물을 수집하므로 기존 AI 키워드 일치 여부를 별도로 요구하지 않습니다. 피드에 공개된 제목·요약·작성자·날짜·원문 링크를 사용하고, 원문 전체는 별도 크롤링하지 않습니다. 피드마다 공개 글 수와 본문 길이가 다르며 MIT Technology Review 등 일부 매체의 원문은 구독이 필요할 수 있습니다. Hacker News는 Algolia 공개 API에서 관심 키워드에 맞는 최근 24시간 게시물을 수집합니다. GitHub Actions에서는 저장소 기본 토큰과 코드에 정의한 Reddit User-Agent를 사용합니다.
+| 위치 | 설정 내용 |
+| --- | --- |
+| [.env.example](.env.example) → `.env` | `DATABASE_URL`, `SLACK_WEBHOOK_URL`, `LLM_API_KEY`, API 토큰, 소스 활성화, 수집 상한, 시간대 |
+| [config/interests.yaml](config/interests.yaml) | 관심 키워드, subreddit, AI 뉴스 피드, 기술 블로그 피드 |
+| [.github/workflows/daily.yml](.github/workflows/daily.yml) | 매일 08:00 `Asia/Seoul` 실행과 수동 실행 옵션 |
 
-## 점수와 요약
+LLM 키가 없거나 요약에 실패하면 소스별 제목만 표시하고 요약은 생략합니다. DB 시각은 UTC로 저장하며, 보고 시 기본 시간대인 `Asia/Seoul`로 변환합니다. 로컬 명령은 호출할 때 실행되며, 자동 실행은 GitHub Actions 워크플로에서 관리합니다.
 
-기본 수집 점수는 `final = relevance×0.35 + trend×0.30 + quality×0.20 + freshness×0.15`이며 전부 0~100입니다. AI 뉴스 보고서는 최근 24시간 후보에 대해 매체가 공개한 24시간 참여 지표를 우선하고, 지표가 없으면 새 사건 여부·영향 범위·기사 근거의 구체성·다른 매체의 동시 보도·피드 내 배치를 조합해 다시 순위를 정합니다. 최근성은 같은 점수의 순서를 정할 때만 사용합니다. Hacker News는 Algolia 공개 API의 최근 24시간 points와 comments를 사용하고, 다른 RSS 피드는 명시적인 24시간 인기 지표가 없으므로 이를 임의로 추정하지 않습니다. 순위 근거는 `score_reasons`와 `raw_metadata.news_rank_evidence`에 남깁니다. 보고서는 AI 뉴스 최대 28개(소스별 최대 2개), AI 기술 최대 24개를 담고 소스별 구획을 표시합니다. AI 기술은 블로그별 최대 2개, GitHub와 Hugging Face 각각 최대 5개, Reddit 최대 2개를 선택합니다. 기술 블로그의 최근 후보는 게시 시각 또는 수집 시각이 최근 24시간인 글입니다. 해당 블로그의 최근 후보가 없을 때만 저장된 글에서 게시 시각 최신순 최대 2개를 보충하며, 최근 후보가 1개면 그대로 1개만 표시합니다.
+GitHub Actions에는 영속 PostgreSQL을 가리키는 `DATABASE_URL` secret이 필요합니다. 실제 발송에는 `SLACK_WEBHOOK_URL`, LLM 요약에는 `LLM_API_KEY`를 설정합니다. GitHub는 워크플로 기본 토큰을 사용하며, Hugging Face 토큰은 `HUGGINGFACE_TOKEN` secret으로 전달합니다.
 
-LLM은 외부 본문을 데이터로 명시하고 구조화 JSON을 검증해 `무슨 소식인지`를 한국어로 편집합니다. 2회 실패 또는 키 미설정 시 소스별 제목만 표시하며 요약 문구는 덧붙이지 않습니다. 규칙 기반 fallback은 번역·해석이 아니라는 한계가 있습니다.
+기본 브랜치에 반영한 뒤 `Actions > daily-glean-ai > Run workflow`에서 수동 실행할 수 있습니다. 기본 `dry_run`은 저장·발송을 생략하고 브리프를 로그로 출력합니다. 실제 실행은 `dry_run`을 끄고, 오늘 보낸 브리프를 다시 보내려면 `force`를 켭니다. 워크플로는 미리보기에서도 먼저 DB migration을 적용합니다.
 
-## Slack과 스케줄
+## 핵심 제약
 
-Webhook URL을 설정하고 `glean-ai report`를 실행합니다. Slack 메시지는 `AI 뉴스`와 `AI 기술` 두 개이며, 두 메시지에 `interests.yaml`의 18개 피드 ID와 GitHub·Hugging Face·Reddit을 합친 21개 소스 구획을 표시합니다. 각 소스명과 항목 수는 전용 헤더 블록으로 표시합니다. AI 뉴스는 점수순으로 최대 28개, AI 기술은 최대 24개 항목을 담습니다. AI 뉴스와 기술 블로그는 소스별 최대 2개, GitHub와 Hugging Face는 각각 최대 5개, Reddit은 원래 하루 인기 1·2위를 순서대로 표시합니다. 후보가 부족하면 실제 후보 수만 표시합니다. 각 항목은 제목·링크·요약을 표시하고, 공개 지표가 있으면 플랫폼명 없이 지표 값만 덧붙입니다. 지표가 없는 항목은 별도 지표 행을 표시하지 않습니다. 메시지마다 최대 50개 Block Kit 블록을 사용하며, 제목과 링크만으로 한도를 넘으면 보고를 실패 처리합니다. `daily`에서는 수집 결과가 없거나 실패한 플랫폼에도 수집 상태를 표시합니다. GitHub는 stars와 forks를, Hacker News는 points와 comments를, Reddit은 최근 24시간 인기 순위를 지표로 사용합니다. 재수집한 게시물은 현재 순위로 갱신하며, `daily`의 수집이 성공·부분 성공·빈 결과면 현재 결과로 Reddit 보고 후보를 교체합니다. dry-run도 현재 결과와 순서를 사용하고 DB는 변경하지 않습니다. 동일 로컬 날짜는 한 번만 전송하며 `--force`만 재전송을 허용합니다. 전송이 중간에 실패하면 이미 성공한 메시지 그룹을 기록해 재실행 시 건너뜁니다. `.github/workflows/daily.yml`의 `23:00 UTC`는 한국 시간 08:00입니다. Section block 텍스트는 2,900자 이하로 나눕니다.
+- RSS/Atom은 공개 피드 항목만 사용하며 원문 전체를 별도로 크롤링하지 않습니다. 일부 원문은 구독이 필요할 수 있습니다.
+- Hugging Face는 모델만 수집합니다. 데이터셋·Space, GitHub release·증가량 시계열은 후속 범위입니다.
+- 의미가 같은 다른 표현의 중복은 문자열 유사도만으로 놓칠 수 있습니다.
+- 보존 기간 자동 삭제와 상세 보고서 artifact 저장은 아직 없습니다.
 
-## 테스트와 검증
-
-```bash
-pytest
-ruff check .
-mypy
-docker compose config
-```
-
-mock 기반 GitHub·Hugging Face·Reddit 정규화, idempotency, URL/텍스트 중복, 점수, 분류, 부분 실패, LLM fallback, Block Kit, Slack 중복 방지, dry-run을 검증합니다.
-
-## 새 adapter 추가
-
-`collectors/base.py`의 `Collector`를 상속하고 `collect()`에서 공통 `Content`를 반환합니다. `DailyService.collectors()`와 enable 설정을 추가하고 응답 정규화·부분 실패 테스트를 작성합니다. 공식 API/SDK만 사용하고 권한이 없으면 adapter만 비활성화합니다.
-
-## 운영·장애 대응
-
-- Slack 상단과 JSON 로그의 source 상태 및 `runs` 이력을 확인합니다. timeout/transport 오류는 지수 backoff로 3회 재시도하며 HTTP 429의 `Retry-After`를 준수합니다.
-- 토큰은 `SecretStr`로 관리하고 오류 메시지의 인증 헤더 명칭을 마스킹합니다. 원문은 요약에 필요한 excerpt와 공개 metadata만 저장합니다.
-- PostgreSQL은 매일 관리형 snapshot을 권장합니다. 기본 보존 가정은 콘텐츠 90일, 실행 이력 30일이며 실제 삭제 job은 배포 환경에서 설정해야 합니다.
-- 삭제: source 약관/요청에 따라 `contents`의 source 또는 external ID로 삭제합니다. DB 백업 보존분도 정책에 맞춰 만료시킵니다.
-- 비용: PostgreSQL, 외부 API 유료 tier, LLM tokens, GitHub Actions 사용량, Slack 운영 비용.
-
-## 알려진 제약
-
-- Hugging Face 현재 구현은 model만 수집합니다. dataset/space와 GitHub release·증가량 시계열은 후속 범위입니다.
-- RSS/Atom은 게시자가 공개한 피드 항목만 사용합니다. 본문이 피드에 포함되지 않으면 원문 페이지를 별도로 크롤링하지 않습니다.
-- 서로 다른 source의 의미 기반 클러스터링은 문자열 유사도만 사용합니다.
-- 보존 기간 자동 삭제와 상세 리포트 artifact 저장은 아직 없습니다.
+운영 중에는 Slack의 수집 상태, JSON 로그, DB의 `runs` 이력을 확인합니다. 소스와 선택 기준의 자세한 구현은 [collectors](src/glean_ai/collectors), [pipeline.py](src/glean_ai/pipeline.py), [cli.py](src/glean_ai/cli.py)에서 확인할 수 있습니다.
