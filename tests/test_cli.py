@@ -195,6 +195,7 @@ def test_twenty_four_technology_items_fit_slack(monkeypatch, tmp_path, sample):
     store = Store(f"sqlite:///{tmp_path / 'full.db'}")
     store.create_all()
     urls = []
+    github_items = []
     for source in [*blogs, "github", "huggingface", "reddit"]:
         for rank in range(1, (5 if source in {"github", "huggingface"} else 2) + 1):
             item = sample.model_copy(deep=True)
@@ -204,8 +205,15 @@ def test_twenty_four_technology_items_fit_slack(monkeypatch, tmp_path, sample):
             item.final_score = rank * 20 if source == "reddit" else 100 - rank
             if source == "reddit":
                 item.raw_metadata = {"daily_rank": rank}
-            store.upsert(item)
+            if source == "github":
+                github_items.append(item)
+            else:
+                store.upsert(item)
             urls.append(str(item.url))
+    store.persist_github_collection(
+        github_items, CollectionResult(source="github", status="success", contents=github_items),
+        datetime.now(timezone.utc),
+    )
     client = httpx.AsyncClient()
     service = DailyService(settings, store, client)
     monkeypatch.setattr(cli, "runtime", lambda: (service, store, client))
@@ -240,3 +248,25 @@ def test_news_non_dry_run_keeps_recent_candidate_semantics(monkeypatch, tmp_path
     result = CollectionResult(source="news_one", status=CollectionStatus.SUCCESS, contents=[item])
     messages = asyncio.run(cli._make_report(24, False, False, False, {"news_one": result}))
     assert str(item.url) not in str(messages["AI 뉴스"])
+
+
+@pytest.mark.parametrize('status', ['success', 'empty', 'failed', 'disabled'])
+def test_report_current_github_result_replaces_saved_candidates(monkeypatch, sample, status):
+    from glean_ai.models import CollectionResult
+    old = sample.model_copy(deep=True)
+    old.title = 'Old candidate'
+    current = sample.model_copy(deep=True)
+    current.title = 'Current candidate'
+    class Service:
+        def recent(self, hours):
+            return [old]
+        def latest_for_source(self, source, limit=2):
+            return []
+    client = httpx.AsyncClient()
+    monkeypatch.setattr(cli, 'runtime', lambda: (Service(), None, client))
+    monkeypatch.setattr(cli, 'get_settings', lambda: Settings())
+    contents = [current] if status == 'success' else []
+    messages = asyncio.run(cli._make_report(24, False, True, False, {'github': CollectionResult(source='github', status=status, contents=contents)}))
+    text = str(messages)
+    assert 'Old candidate' not in text
+    assert ('Current candidate' in text) == (status == 'success')

@@ -133,3 +133,27 @@ def test_news_selection_is_unchanged(sample):
     assert len(selected) == 28
     assert all(sum(item.source == source for item in selected) <= 2 for source in {item.source for item in items})
     assert [item.final_score for item in selected] == sorted([item.final_score for item in selected], reverse=True)
+
+
+def test_technology_reserves_github_mixed_order_even_at_low_scores(sample):
+    from glean_ai.pipeline import select_technology_report_items
+    github = []
+    for identifier, stars, delta in [('a', 10, 80), ('b', 20, 70), ('c', 30, 60), ('d', 1000, None), ('e', 900, None), ('f', 800, 1)]:
+        item = sample.model_copy(deep=True)
+        item.external_id = identifier
+        item.metrics.stars = stars
+        item.final_score = 0
+        item.raw_metadata['github_star_observation'] = {'delta': delta}
+        github.append(item)
+    blogs = []
+    for i in range(20):
+        item = sample.model_copy(deep=True)
+        item.source = f'blog{i}'
+        item.final_score = 100
+        blogs.append(item)
+    selected = select_technology_report_items(github+blogs, [item.source for item in blogs])
+    assert len(selected) == 24
+    assert [i.external_id for i in selected if i.source == 'github'] == ['a', 'b', 'c', 'd', 'e']
+    for limit in range(5):
+        selected = select_technology_report_items(github+blogs, [i.source for i in blogs], limit=limit)
+        assert [i.external_id for i in selected] == ['a', 'b', 'c', 'd'][:limit]

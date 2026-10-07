@@ -142,3 +142,75 @@ async def test_reddit_top_two_survive_keyword_filter(tmp_path, sample):
             "reddit", Collector(), {"keywords": ["unmatched"]}, True, False
         )
     assert [content.external_id for content in result.contents] == [item.external_id]
+
+
+@pytest.mark.asyncio
+async def test_github_dry_run_and_saved_observation_parity(tmp_path, sample):
+    from glean_ai.models import CollectionResult
+    now = datetime.now(timezone.utc)
+    store = Store(f"sqlite:///{tmp_path / 'github.db'}")
+    store.create_all()
+    baseline = sample.model_copy(deep=True)
+    baseline.metrics.stars = 80
+    store.persist_github_collection([baseline], CollectionResult(source='github', status='success', contents=[baseline]), now-timedelta(hours=24))
+    class Collector:
+        partial_errors = []
+        async def collect(self, interests):
+            return [sample.model_copy(deep=True)]
+    settings = Settings()
+    async with httpx.AsyncClient() as client:
+        service = DailyService(settings, store, client)
+        with store.session() as session:
+            before = session.execute(__import__('sqlalchemy').text('SELECT count(*) FROM github_star_snapshots')).scalar()
+        _, dry = await service._collect_one('github', Collector(), {'keywords': ['AI']}, True, True)
+        with store.session() as session:
+            assert session.execute(__import__('sqlalchemy').text('SELECT count(*) FROM github_star_snapshots')).scalar() == before
+            assert session.query(RunRow).count() == 1
+        _, saved = await service._collect_one('github', Collector(), {'keywords': ['AI']}, True, False)
+        assert dry.contents[0].raw_metadata['github_star_observation']['delta'] == 20
+        assert saved.contents[0].raw_metadata['github_star_observation']['delta'] == 20
+        assert store.latest_github_run().started_at.isoformat() == saved.contents[0].raw_metadata['github_star_observation']['observed_at']
+
+
+def test_github_recent_ignores_hours_and_old_repository_updates(tmp_path, sample):
+    from glean_ai.models import CollectionResult
+    now = datetime.now(timezone.utc)
+    sample.published_at = now-timedelta(days=30)
+    store = Store(f"sqlite:///{tmp_path / 'report.db'}")
+    store.create_all()
+    baseline = sample.model_copy(deep=True)
+    baseline.metrics.stars = 75
+    store.persist_github_collection([baseline], CollectionResult(source='github', status='success'), now-timedelta(hours=24))
+    store.persist_github_collection([sample], CollectionResult(source='github', status='success'), now)
+    client = httpx.AsyncClient()
+    service = DailyService(Settings(), store, client)
+    for hours in (1, 24, 240):
+        rows = service.recent(hours)
+        assert len(rows) == 1
+        assert rows[0].metrics.stars == 100
+        assert rows[0].raw_metadata['github_star_observation']['delta'] == 25
+    import asyncio
+    asyncio.run(client.aclose())
+
+
+@pytest.mark.asyncio
+async def test_github_dry_run_never_emits_database_writes(tmp_path, sample):
+    from sqlalchemy import event
+    from glean_ai.models import CollectionResult
+    store = Store(f"sqlite:///{tmp_path / 'readonly.db'}")
+    store.create_all()
+    store.persist_github_collection([sample], CollectionResult(source='github', status='success'), datetime.now(timezone.utc)-timedelta(hours=24))
+    writes = []
+    def capture(connection, cursor, statement, parameters, context, executemany):
+        if statement.split()[0].upper() in {'INSERT', 'UPDATE', 'DELETE'}:
+            writes.append(statement)
+    event.listen(store.engine, 'before_cursor_execute', capture)
+    class Collector:
+        partial_errors = []
+        async def collect(self, interests):
+            return [sample.model_copy(deep=True)]
+    async with httpx.AsyncClient() as client:
+        service = DailyService(Settings(), store, client)
+        await service._collect_one('github', Collector(), {'keywords': ['AI']}, True, True)
+        service.recent()
+    assert writes == []

@@ -60,7 +60,7 @@ def test_huggingface_fallback_describes_trend_without_claiming_update(sample):
     model.source = "huggingface"
     summary = Summarizer.fallback(model)
 
-    assert "주목받는 모델" in summary.title_ko
+    assert summary.title_ko == model.title[:100]
     assert "현재 트렌드" in summary.summary_ko
     assert "최신 변경" not in summary.summary_ko
 
@@ -478,3 +478,34 @@ def test_latest_blog_posts_use_publication_order(tmp_path, sample):
     rows = store.latest_for_source("tech_one")
     assert [row.external_id for row in rows] == ["1", "2"]
     assert store.latest_for_source("missing") == []
+
+
+@pytest.mark.parametrize('delta,label', [(5, '순증가 +5'), (0, '순변화 +0'), (-2, '순변화 -2')])
+def test_github_metrics_show_measured_interval(sample, delta, label):
+    from glean_ai.reporters import _metric_text
+    sample.raw_metadata['github_star_observation'] = {'delta': delta, 'elapsed_seconds': 85680}
+    text = _metric_text(sample)
+    assert f'23.8시간 {label}' in text
+    assert '⭐ 100' in text
+    assert 'Fork 10' in text
+
+
+@pytest.mark.parametrize('source', ['github', 'huggingface', 'reddit'])
+@pytest.mark.parametrize('title', ['Original title', '원문 오픈소스 업데이트 주목받는 모델 AI 커뮤니티 논의', '가'*150])
+def test_fallback_preserves_original_title_and_cap(sample, source, title):
+    sample.source = source
+    sample.title = title
+    assert Summarizer.fallback(sample).title_ko == title[:100]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_hf_prompt_drops_fixed_copy_but_retains_factuality(sample):
+    sample.source = 'huggingface'
+    route = respx.post('https://example.com/chat/completions').mock(return_value=httpx.Response(200, json={'choices': [{'message': {'content': '{"title_ko":"모델", "summary_ko":"요약", "areas":["개발"]}'}}]}))
+    async with httpx.AsyncClient() as client:
+        await Summarizer(client, 'test-key', 'https://example.com', 'model').summarize(sample)
+    import json
+    prompt = json.loads(route.calls[0].request.content)['messages'][0]['content']
+    assert '주목받는 모델' not in prompt
+    assert '최근 공개되거나 업데이트됐다고 단정하지 마라' in prompt

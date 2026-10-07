@@ -15,7 +15,7 @@ SYSTEM_PROMPT = """너는 AI·기술 제품·개발·디자인 뉴스 에디터�
 - 제목이나 summary_ko를 되풀이하거나 "확인할 수 있습니다", "도움이 됩니다" 같은 일반 문구만으로 끝내지 않는다.
   소식마다 적용 맥락과 표현을 달리하고, 길이를 채우기 위한 설명은 덧붙이지 않는다.
 - uncertainty: 제공된 정보만으로 확인할 수 없는 점. 없으면 null
-Hugging Face 항목은 현재 주목받는 모델이며, 최근 공개되거나 업데이트됐다고 단정하지 마라.
+Hugging Face 항목은 근거 없이 최근 공개되거나 업데이트됐다고 단정하지 마라.
 과장하거나 성능·출시 여부를 추측하지 마라."""
 
 
@@ -58,14 +58,7 @@ class Summarizer:
     def fallback(content: Content) -> TopicSummary:
         areas = sorted({category.split("/", 1)[0] for category in content.categories}) or ["개발"]
         summary = ""
-        if content.source == "huggingface":
-            title = f"{content.title} 주목받는 모델"
-        elif content.source == "github":
-            title = f"{content.title} 오픈소스 업데이트"
-        elif content.source == "reddit":
-            title = f"AI 커뮤니티 논의: {content.title}"
-        else:
-            title = content.title
+        title = content.title
         return TopicSummary(
             title_ko=title[:100], summary_ko=summary[:500],
             areas=areas,

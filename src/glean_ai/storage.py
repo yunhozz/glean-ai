@@ -1,12 +1,12 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, Float, String, Text, UniqueConstraint, and_, create_engine, or_, select
+from sqlalchemy import JSON, DateTime, Float, ForeignKey, Index, String, Text, UniqueConstraint, and_, create_engine, delete, or_, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
-from .models import Content
+from .models import CollectionResult, Content
 
 
 class Base(DeclarativeBase):
@@ -52,6 +52,19 @@ class RunRow(Base):
     error_code: Mapped[str | None] = mapped_column(String(64))
     fetched_count: Mapped[int] = mapped_column(default=0)
     accepted_count: Mapped[int] = mapped_column(default=0)
+
+
+class GitHubStarSnapshotRow(Base):
+    __tablename__ = "github_star_snapshots"
+    __table_args__ = (
+        UniqueConstraint("external_id", "observation_id", name="uq_github_star_observation"),
+        Index("ix_github_star_external_observed", "external_id", "observed_at"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    external_id: Mapped[str] = mapped_column(String(255))
+    observation_id: Mapped[int] = mapped_column(ForeignKey("runs.id"))
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    stars: Mapped[int] = mapped_column()
 
 
 class ReportRow(Base):
@@ -104,7 +117,7 @@ class Store:
                 data["metrics"] = content.metrics.model_dump()
                 row = existing.get(content.external_id)
                 if row:
-                    if content.source in {"huggingface", "hacker_news_ai", "reddit"}:
+                    if content.source in {"github", "huggingface", "hacker_news_ai", "reddit"}:
                         for name, value in data.items():
                             setattr(row, name, value)
                     continue
@@ -132,3 +145,84 @@ class Store:
             ).order_by(
                 ContentRow.published_at.desc(), ContentRow.external_id.asc()
             ).limit(max(0, limit))).all())
+
+
+    def latest_github_run(self) -> RunRow | None:
+        with self.session() as session:
+            row = session.scalar(select(RunRow).where(
+                RunRow.kind == "collect", RunRow.source == "github"
+            ).order_by(RunRow.started_at.desc(), RunRow.id.desc()).limit(1))
+        if row and row.started_at.tzinfo is None:
+            row.started_at = row.started_at.replace(tzinfo=timezone.utc)
+        return row
+
+    def github_observations(
+        self, external_ids: list[str], since: datetime, until: datetime
+    ) -> list[GitHubStarSnapshotRow]:
+        with self.session() as session:
+            rows = list(session.scalars(select(GitHubStarSnapshotRow).where(
+                GitHubStarSnapshotRow.external_id.in_(external_ids),
+                GitHubStarSnapshotRow.observed_at >= since,
+                GitHubStarSnapshotRow.observed_at <= until,
+            )))
+        for row in rows:
+            if row.observed_at.tzinfo is None:
+                row.observed_at = row.observed_at.replace(tzinfo=timezone.utc)
+        return rows
+
+
+    def persist_github_collection(
+        self, contents: list[Content], result: CollectionResult, started_at: datetime
+    ) -> int:
+        with self.session() as session:
+            run = RunRow(
+                kind="collect", source="github", status=result.status,
+                started_at=started_at, finished_at=datetime.now(timezone.utc),
+                error=result.error_message, error_code=result.error_code,
+                fetched_count=result.fetched_count, accepted_count=result.accepted_count,
+            )
+            session.add(run)
+            session.flush()
+            candidates = {c.external_id: c for c in contents if c.source == "github"}
+            existing = {row.external_id: row for row in session.scalars(select(ContentRow).where(
+                ContentRow.source == "github", ContentRow.external_id.in_(candidates)
+            ))}
+            inserted = 0
+            if result.status in {"success", "partial"}:
+                for content in candidates.values():
+                    data = content.model_dump()
+                    data["url"] = str(content.url)
+                    row = existing.get(content.external_id)
+                    if row is None:
+                        session.add(ContentRow(**data))
+                        inserted += 1
+                    else:
+                        for name, value in data.items():
+                            setattr(row, name, value)
+                    # Only explicitly supplied, valid counts are observations.
+                    if "stars" in content.metrics.model_fields_set and content.metrics.stars >= 0:
+                        session.add(GitHubStarSnapshotRow(
+                            external_id=content.external_id, observation_id=run.id,
+                            observed_at=started_at, stars=content.metrics.stars,
+                        ))
+            session.execute(delete(GitHubStarSnapshotRow).where(
+                GitHubStarSnapshotRow.observed_at < started_at-timedelta(days=7)
+            ))
+        return inserted
+
+    def github_report_rows(
+        self, report_at: datetime
+    ) -> list[tuple[ContentRow, GitHubStarSnapshotRow]]:
+        latest = self.latest_github_run()
+        if (latest is None or latest.status not in {'success', 'partial'}
+                or not report_at-timedelta(hours=24) <= latest.started_at <= report_at):
+            return []
+        with self.session() as session:
+            rows = list(session.execute(select(ContentRow, GitHubStarSnapshotRow).join(
+                GitHubStarSnapshotRow,
+                and_(ContentRow.source == 'github', ContentRow.external_id == GitHubStarSnapshotRow.external_id),
+            ).where(GitHubStarSnapshotRow.observation_id == latest.id)))
+        for _, snapshot in rows:
+            if snapshot.observed_at.tzinfo is None:
+                snapshot.observed_at = snapshot.observed_at.replace(tzinfo=timezone.utc)
+        return [(content, snapshot) for content, snapshot in rows]

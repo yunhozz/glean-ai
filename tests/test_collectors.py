@@ -242,3 +242,17 @@ async def test_reddit_collects_only_original_top_two(invalid_first):
         items = await RedditCollector(client).collect({"subreddits": ["artificial", "MachineLearning"]})
     assert [item.raw_metadata["daily_rank"] for item in items] == ([2] if invalid_first else [1, 2])
     assert route.call_count == 1
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_github_skips_invalid_star_counts():
+    from glean_ai.collectors.github import GitHubCollector
+    repo = {'id': 1, 'owner': {'login': 'acme'}, 'full_name': 'acme/ai', 'description': 'AI', 'html_url': 'https://github.com/acme/ai', 'updated_at': '2026-10-07T00:00:00Z', 'forks_count': 0, 'open_issues_count': 0}
+    entries = [dict(repo, id=i, stargazers_count=value) for i, value in enumerate([None, '100', True, -1, 9, 10])]
+    route = respx.get('https://api.github.com/search/repositories').mock(return_value=httpx.Response(200, json={'items': entries}))
+    async with httpx.AsyncClient() as client:
+        contents = await GitHubCollector(client).collect({'keywords': ['AI']})
+    assert [c.external_id for c in contents] == ['5']
+    assert route.calls[0].request.url.params['sort'] == 'updated'
+    assert route.calls[0].request.url.params['q'] == 'AI stars:>=10'

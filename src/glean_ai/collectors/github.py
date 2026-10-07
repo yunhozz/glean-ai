@@ -57,7 +57,9 @@ class GitHubCollector(Collector):
         unique = [
             item
             for item in {str(item["id"]): item for item in items}.values()
-            if item.get("stargazers_count", 0) >= MIN_STARS
+            if isinstance(item.get("stargazers_count"), int)
+            and not isinstance(item["stargazers_count"], bool)
+            and item["stargazers_count"] >= MIN_STARS
         ][:self.limit]
         return [Content(
             source=self.source, external_id=str(item["id"]), content_type="repository",

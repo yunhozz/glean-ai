@@ -8,6 +8,7 @@ from itertools import combinations
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from .models import Content
+from .github_ranking import select_github
 
 CATEGORY_RULES = {
     "기획/AI 제품 전략": ("product", "strategy", "roadmap", "제품", "전략"),
@@ -302,7 +303,9 @@ def select_technology_report_items(
     ordered: dict[str, list[Content]] = {}
     for source in sources:
         source_items = [item for item in items if item.source == source]
-        if source == "reddit":
+        if source == "github":
+            source_items = select_github(source_items)
+        elif source == "reddit":
             source_items = [item for item in source_items if item.raw_metadata.get("daily_rank") in (1, 2)]
             source_items.sort(key=lambda item: item.raw_metadata["daily_rank"])
         elif source in fallback_sources:
@@ -311,6 +314,11 @@ def select_technology_report_items(
             source_items.sort(key=lambda item: item.final_score, reverse=True)
         ordered[source] = source_items[:5 if source in {"github", "huggingface"} else 2]
         candidates.extend(ordered[source])
-    selected = select_report_items(candidates, min(limit, 24), sources, max_per_source=5)
+    github = ordered["github"][:max(0, min(limit, 24))]
+    selected = github + select_report_items(
+        [item for item in candidates if item.source != "github"],
+        max(0, min(limit, 24)-len(github)),
+        [source for source in sources if source != "github"], max_per_source=5,
+    )
     selected_ids = {id(item) for item in selected}
     return [item for source in sources for item in ordered[source] if id(item) in selected_ids]

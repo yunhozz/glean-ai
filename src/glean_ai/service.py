@@ -14,6 +14,7 @@ from .collectors import (
 )
 from .collectors.base import CollectorError
 from .config import Settings
+from .github_ranking import StarObservation, with_observation
 from .models import CollectionResult, CollectionStatus, Content
 from .pipeline import process
 from .storage import ContentRow, RunRow, Store
@@ -116,6 +117,8 @@ class DailyService:
                     collector, (RSSCollector, HackerNewsCollector)
                 ),
             )
+            if name == "github":
+                contents = await asyncio.to_thread(self._observe_github, contents, started)
             partial_errors = collector.partial_errors  # type: ignore[attr-defined]
             status = (
                 CollectionStatus.PARTIAL if partial_errors
@@ -174,9 +177,21 @@ class DailyService:
     def _persist_sync(
         self, contents: list[Content], result: CollectionResult, started: datetime
     ) -> int:
+        if result.source == "github":
+            return self.store.persist_github_collection(contents, result, started)
         inserted = self.store.upsert_many(contents) if contents else 0
         self._record(result, started)
         return inserted
+
+    def _observe_github(self, contents: list[Content], started: datetime) -> list[Content]:
+        history = self.store.github_observations(
+            [c.external_id for c in contents],
+            started-timedelta(hours=26), started-timedelta(hours=22),
+        )
+        return [with_observation(content, started, [
+            StarObservation(row.observed_at, row.stars)
+            for row in history if row.external_id == content.external_id
+        ]) for content in contents]
 
     def _record(
         self, result: CollectionResult, started: datetime
@@ -201,7 +216,16 @@ class DailyService:
         rows = self.store.recent(
             datetime.now(timezone.utc) - timedelta(hours=hours), tech_blog_sources
         )
-        return self._contents_from_rows(rows)
+        current = [c for c in self._contents_from_rows(rows) if c.source != "github"]
+        report_at = datetime.now(timezone.utc)
+        github_rows = self.store.github_report_rows(report_at)
+        if github_rows:
+            observed_at = github_rows[0][1].observed_at
+            github = self._contents_from_rows([row for row, _ in github_rows])
+            for content, (_, snapshot) in zip(github, github_rows, strict=True):
+                content.metrics.stars = snapshot.stars
+            current.extend(self._observe_github(github, observed_at))
+        return current
 
     def latest_for_source(self, source: str, limit: int = 2) -> list[Content]:
         return self._contents_from_rows(self.store.latest_for_source(source, limit))

@@ -46,10 +46,13 @@ def _area_label(content: Content, summary: TopicSummary) -> str:
 
 def _metric_text(content: Content) -> str:
     if content.source == "github":
-        return (
-            f"⭐ {content.metrics.stars:,} · "
-            f"Fork {content.metrics.forks:,}"
-        )
+        evidence = content.raw_metadata.get("github_star_observation", {})
+        delta, elapsed = evidence.get("delta"), evidence.get("elapsed_seconds")
+        change = ""
+        if isinstance(delta, int) and isinstance(elapsed, (int, float)):
+            label = "순증가" if delta > 0 else "순변화"
+            change = f" · {elapsed / 3600:.1f}시간 {label} {delta:+,}"
+        return f"⭐ {content.metrics.stars:,}{change} · Fork {content.metrics.forks:,}"
     if content.source == "hacker_news_ai":
         return (
             f"▲ {content.metrics.likes:,} points · "

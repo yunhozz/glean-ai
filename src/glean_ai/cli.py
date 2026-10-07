@@ -76,6 +76,11 @@ async def _make_report(
             item for item in service.recent(hours) if item.source in source_ids
         ]
         if collection_results:
+            github_result = collection_results.get("github")
+            if github_result is not None:
+                recent_items = [item for item in recent_items if item.source != "github"]
+                if github_result.status in {CollectionStatus.SUCCESS, CollectionStatus.PARTIAL}:
+                    recent_items.extend(github_result.contents)
             reddit_result = collection_results.get("reddit")
             if reddit_result and reddit_result.status in {
                 CollectionStatus.SUCCESS, CollectionStatus.PARTIAL, CollectionStatus.EMPTY,
@@ -86,7 +91,7 @@ async def _make_report(
                 current_items = [
                     item for result in collection_results.values()
                     for item in result.contents
-                    if item.source in source_ids and item.source != "reddit"
+                    if item.source in source_ids and item.source not in {"reddit", "github"}
                 ]
                 current_ids = {(item.source, item.external_id) for item in current_items}
                 recent_items = [
