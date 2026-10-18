@@ -34,7 +34,10 @@ class RedditCollector(Collector):
             headers={"User-Agent": self.user_agent},
         )
         found = {item.external_id: item for item in self._parse(document)}
-        return [item for item in found.values() if item.raw_metadata["daily_rank"] in (1, 2)][:self.limit]
+        return [
+            item for item in found.values()
+            if item.raw_metadata["daily_rank"] in (1, 2, 3, 4, 5)
+        ][:self.limit]
 
     def _parse(self, document: str) -> list[Content]:
         try:

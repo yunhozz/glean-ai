@@ -210,9 +210,17 @@ def test_twenty_four_technology_items_fit_slack(monkeypatch, tmp_path, sample):
             else:
                 store.upsert(item)
             urls.append(str(item.url))
+    now = datetime.now(timezone.utc)
+    baseline_items = [item.model_copy(deep=True) for item in github_items[3:]]
+    for item in baseline_items:
+        item.metrics.stars -= 10
+    store.persist_github_collection(
+        baseline_items, CollectionResult(source="github", status="success", contents=baseline_items),
+        now - timedelta(hours=24),
+    )
     store.persist_github_collection(
         github_items, CollectionResult(source="github", status="success", contents=github_items),
-        datetime.now(timezone.utc),
+        now,
     )
     client = httpx.AsyncClient()
     service = DailyService(settings, store, client)

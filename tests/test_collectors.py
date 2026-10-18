@@ -152,12 +152,14 @@ async def test_github_preserves_results_when_one_query_fails():
         side_effect=[
             httpx.Response(200, json={"items": [github_item()]}),
             httpx.Response(422),
+            httpx.Response(422),
+            httpx.Response(422),
         ]
     )
     async with httpx.AsyncClient() as client:
         collector = GitHubCollector(client)
         result = await collector.collect({"keywords": [f"keyword-{i}" for i in range(7)]})
-    assert route.call_count == 2
+    assert route.call_count == 4
     assert [item.external_id for item in result] == ["1"]
     assert collector.partial_errors[0].code == "invalid_query"
 
@@ -228,19 +230,19 @@ async def test_rss_collector_retries_rate_limited_response():
 @pytest.mark.asyncio
 @respx.mock
 @pytest.mark.parametrize("invalid_first", [False, True])
-async def test_reddit_collects_only_original_top_two(invalid_first):
+async def test_reddit_collects_only_original_top_five(invalid_first):
     entries = "".join(
         f'<entry><id>p{rank}</id><title>Landscape {rank}</title>'
         + ("" if invalid_first and rank == 1 else '<published>2026-10-05T00:00:00Z</published>')
         + f'<link href="https://www.reddit.com/r/artificial/comments/p{rank}/" /></entry>'
-        for rank in range(1, 5)
+        for rank in range(1, 7)
     )
     route = respx.get("https://www.reddit.com/r/artificial+MachineLearning/top/.rss?t=day").mock(
         return_value=httpx.Response(200, text=f'<feed xmlns="http://www.w3.org/2005/Atom">{entries}</feed>')
     )
     async with httpx.AsyncClient() as client:
         items = await RedditCollector(client).collect({"subreddits": ["artificial", "MachineLearning"]})
-    assert [item.raw_metadata["daily_rank"] for item in items] == ([2] if invalid_first else [1, 2])
+    assert [item.raw_metadata["daily_rank"] for item in items] == ([2, 3, 4, 5] if invalid_first else [1, 2, 3, 4, 5])
     assert route.call_count == 1
 
 
@@ -254,5 +256,18 @@ async def test_github_skips_invalid_star_counts():
     async with httpx.AsyncClient() as client:
         contents = await GitHubCollector(client).collect({'keywords': ['AI']})
     assert [c.external_id for c in contents] == ['5']
-    assert route.calls[0].request.url.params['sort'] == 'updated'
+    assert [call.request.url.params['sort'] for call in route.calls] == ['stars', 'updated']
     assert route.calls[0].request.url.params['q'] == 'AI stars:>=10'
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_github_fairly_merges_search_lanes_with_duplicates_and_bound():
+    def respond(request):
+        ids = [1, 2, 3, 4] if request.url.params['sort'] == 'stars' else [1, 5, 6, 7]
+        return httpx.Response(200, json={'items': [dict(github_item(), id=i) for i in ids]})
+    route = respx.get('https://api.github.com/search/repositories').mock(side_effect=respond)
+    async with httpx.AsyncClient() as client:
+        items = await GitHubCollector(client, limit=5).collect({'keywords': ['AI']})
+    assert [call.request.url.params['sort'] for call in route.calls] == ['stars', 'updated']
+    assert [item.external_id for item in items] == ['1', '5', '2', '6', '3']
