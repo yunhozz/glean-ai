@@ -306,13 +306,16 @@ def select_technology_report_items(
         if source == "github":
             source_items = select_github(source_items)
         elif source == "reddit":
-            source_items = [item for item in source_items if item.raw_metadata.get("daily_rank") in (1, 2)]
+            source_items = [
+                item for item in source_items
+                if item.raw_metadata.get("daily_rank") in (1, 2, 3, 4, 5)
+            ]
             source_items.sort(key=lambda item: item.raw_metadata["daily_rank"])
         elif source in fallback_sources:
             source_items.sort(key=lambda item: (-item.published_at.timestamp(), item.external_id))
         else:
             source_items.sort(key=lambda item: item.final_score, reverse=True)
-        ordered[source] = source_items[:5 if source in {"github", "huggingface"} else 2]
+        ordered[source] = source_items[:5 if source in {"github", "huggingface", "reddit"} else 2]
         candidates.extend(ordered[source])
     github = ordered["github"][:max(0, min(limit, 24))]
     selected = github + select_report_items(

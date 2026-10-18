@@ -1,3 +1,5 @@
+import pytest
+
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 
@@ -99,14 +101,14 @@ def technology_items(sample, sources, count=7):
 
 def test_technology_source_limits(sample):
     from glean_ai import pipeline
-    blogs = [f"blog-{index}" for index in range(6)]
+    blogs = [f"blog-{index}" for index in range(5)]
     items = technology_items(sample, [*blogs, "github", "huggingface", "reddit"])
     selected = pipeline.select_technology_report_items(items, blogs)
-    assert len(selected) == 24
+    assert len(selected) == 23
     assert {source: sum(item.source == source for item in selected) for source in blogs} == dict.fromkeys(blogs, 2)
-    assert sum(item.source == "github" for item in selected) == 5
+    assert sum(item.source == "github" for item in selected) == 3
     assert sum(item.source == "huggingface" for item in selected) == 5
-    assert [item.raw_metadata["daily_rank"] for item in selected if item.source == "reddit"] == [1, 2]
+    assert [item.raw_metadata["daily_rank"] for item in selected if item.source == "reddit"] == [1, 2, 3, 4, 5]
     assert len(pipeline.select_technology_report_items(items, blogs, limit=10)) == 10
     assert pipeline.select_technology_report_items(items, blogs, limit=0) == []
 
@@ -124,7 +126,7 @@ def test_technology_fallback_preserves_latest_order(sample):
     selected = pipeline.select_technology_report_items(items, ["fallback", "primary"], {"fallback"})
     assert [item.external_id for item in selected if item.source == "fallback"] == ["fallback-2", "fallback-1"]
     assert [item.external_id for item in selected if item.source == "primary"] == ["primary-0", "primary-1"]
-    assert [item.raw_metadata["daily_rank"] for item in selected if item.source == "reddit"] == [1, 2]
+    assert [item.raw_metadata["daily_rank"] for item in selected if item.source == "reddit"] == [1, 2, 3]
 
 
 def test_news_selection_is_unchanged(sample):
@@ -143,7 +145,11 @@ def test_technology_reserves_github_mixed_order_even_at_low_scores(sample):
         item.external_id = identifier
         item.metrics.stars = stars
         item.final_score = 0
-        item.raw_metadata['github_star_observation'] = {'delta': delta}
+        item.raw_metadata['github_star_observation'] = {
+            'delta': delta, 'elapsed_seconds': 86400,
+            'baseline_at': '2026-10-07T00:00:00+00:00',
+            'observed_at': '2026-10-08T00:00:00+00:00',
+        }
         github.append(item)
     blogs = []
     for i in range(20):
@@ -153,7 +159,15 @@ def test_technology_reserves_github_mixed_order_even_at_low_scores(sample):
         blogs.append(item)
     selected = select_technology_report_items(github+blogs, [item.source for item in blogs])
     assert len(selected) == 24
-    assert [i.external_id for i in selected if i.source == 'github'] == ['a', 'b', 'c', 'd', 'e']
+    assert [i.external_id for i in selected if i.source == 'github'] == ['d', 'e', 'f', 'a', 'b']
     for limit in range(5):
         selected = select_technology_report_items(github+blogs, [i.source for i in blogs], limit=limit)
-        assert [i.external_id for i in selected] == ['a', 'b', 'c', 'd'][:limit]
+        assert [i.external_id for i in selected] == ['d', 'e', 'f', 'a'][:limit]
+
+
+@pytest.mark.parametrize('limit,want', [(0, []), (3, [1, 2, 3]), (5, [1, 2, 3, 4, 5]), (24, [1, 2, 3, 4, 5])])
+def test_reddit_report_preserves_top_five_rank_order_and_global_limit(sample, limit, want):
+    from glean_ai.pipeline import select_technology_report_items
+    items = list(reversed(technology_items(sample, ['reddit'], count=7)))
+    assert [item.raw_metadata['daily_rank'] for item in
+            select_technology_report_items(items, [], limit=limit)] == want

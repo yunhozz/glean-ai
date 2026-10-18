@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any
 
 import httpx
 
@@ -38,29 +39,47 @@ class GitHubCollector(Collector):
     async def collect(self, interests: dict[str, list[str]]) -> list[Content]:
         self.partial_errors = []
         headers = {"Authorization": f"Bearer {self.token}"} if self.token else None
-        items = []
+        lanes: dict[str, list[dict[str, Any]]] = {"stars": [], "updated": []}
         for query in build_queries(interests.get("keywords", [])):
-            try:
-                data = await self.get_json(
-                    "https://api.github.com/search/repositories",
-                    params={"q": query, "sort": "updated", "per_page": self.limit},
-                    headers=headers,
-                )
-                items.extend(data.get("items", []))
-            except Exception as exc:
-                self.partial_errors.append(
-                    exc if isinstance(exc, CollectorError)
-                    else CollectorError("transport", type(exc).__name__)
-                )
-        if self.partial_errors and not items:
+            for sort, items in lanes.items():
+                try:
+                    data = await self.get_json(
+                        "https://api.github.com/search/repositories",
+                        params={"q": query, "sort": sort, "per_page": self.limit},
+                        headers=headers,
+                    )
+                    items.extend(data.get("items", []))
+                except Exception as exc:
+                    self.partial_errors.append(
+                        exc if isinstance(exc, CollectorError)
+                        else CollectorError("transport", type(exc).__name__)
+                    )
+        if self.partial_errors and not any(lanes.values()):
             raise self.partial_errors[0]
-        unique = [
-            item
-            for item in {str(item["id"]): item for item in items}.values()
-            if isinstance(item.get("stargazers_count"), int)
-            and not isinstance(item["stargazers_count"], bool)
-            and item["stargazers_count"] >= MIN_STARS
-        ][:self.limit]
+        unique = []
+        seen: set[str] = set()
+        iterators = [iter(items) for items in lanes.values()]
+        while len(unique) < self.limit:
+            added = False
+            for lane in iterators:
+                for item in lane:
+                    identifier = str(item["id"])
+                    stars = item.get("stargazers_count")
+                    if (
+                        identifier in seen
+                        or not isinstance(stars, int)
+                        or isinstance(stars, bool)
+                        or stars < MIN_STARS
+                    ):
+                        continue
+                    unique.append(item)
+                    seen.add(identifier)
+                    added = True
+                    break
+                if len(unique) >= self.limit:
+                    break
+            if not added:
+                break
         return [Content(
             source=self.source, external_id=str(item["id"]), content_type="repository",
             author=item["owner"]["login"], title=item["full_name"],
